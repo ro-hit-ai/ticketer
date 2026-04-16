@@ -1,132 +1,83 @@
 // apps/api/src/lib/session.js
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
-const Session = require('../models/Session');
 
-const JWT_SECRET = process.env.JWT_SECRET || 'supersecretkey123';
+const {
+  createSession,
+  deleteSession,
+  deleteAllUserSessions,
+  getUserSessions
+} = require('./sessionStore'); // handles DB ops only
 
-function extractToken(authHeader) {
-  if (!authHeader) return null;
-  return authHeader.startsWith("Bearer ")
-    ? authHeader.slice(7).trim()
-    : authHeader.trim();
-}
+const { getJwtSecret } = require('./jwtSecret');
+const JWT_SECRET = getJwtSecret() || 'supersecretkey123';
 
-// apps/api/src/lib/session.js
+// Validate JWT and fetch user with permissions
 async function checkSession(req) {
   try {
-    const token = extractToken(req.headers.authorization);
-    if (!token) return null;
-
-    let decoded;
-    try {
-      decoded = jwt.verify(token, JWT_SECRET);
-    } catch (err) {
-      console.warn("checkSession → Invalid/expired token:", err.message);
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
       return null;
     }
 
-    const { userId, imap_enabled } = decoded;
-    if (!userId) return null;
+    const token = authHeader.split(' ')[1];
+    const decoded = jwt.verify(token, JWT_SECRET);
 
-    console.log("checkSession → Decoded JWT:", { userId, imap_enabled });
-
-    // Validate session in DB
-    const session = await Session.findOne({
-      sessionToken: token,
-      userId,
-      expires: { $gt: new Date() }
-    }).lean();
-
-    if (!session) {
-      console.log("checkSession → Session not found or expired in DB");
+    const userId = decoded.data?.id || decoded.userId;
+    if (!userId) {
       return null;
     }
 
-    const user = await User.findById(userId).select('isAdmin email name').lean();
-    if (!user) return null;
-
-    const userData = {
-      _id: user._id,
-      id: user._id,
-      email: user.email,
-      name: user.name,
-      isAdmin: user.isAdmin || false,
-      imap_enabled: !!imap_enabled
-    };
-
-    // CRITICAL: SET req.user
-    req.user = userData;
-
-    console.log("checkSession → FINAL userData with imap_enabled:", userData.imap_enabled);
-    return userData;
-  } catch (err) {
-    console.error("checkSession error:", err.message);
-    return null;
-  }
-}
-async function attachUser(req, res, next) {
-  req.user = null;
-  try {
-    const token = extractToken(req.headers.authorization);
-    if (!token) return next();
-
-    let decoded;
-    try {
-      decoded = jwt.verify(token, JWT_SECRET);
-    } catch (err) {
-      return next();
+    const user = await User.findById(userId).populate('roles').exec();
+    if (!user) {
+      return null;
     }
 
-    if (!decoded.userId) return next();
+    const resolvedRoles = Array.isArray(user.roles) ? user.roles.filter(Boolean) : [];
+    const roleNames = resolvedRoles
+      .map((role) => (typeof role?.name === 'string' ? role.name.trim() : ''))
+      .filter(Boolean);
+    const isAgent = roleNames.some((roleName) => roleName.toLowerCase() === 'agent');
+    const rolePermissions = resolvedRoles.flatMap((role) =>
+      Array.isArray(role.permissions) ? role.permissions : []
+    );
+    const permissions = new Set(rolePermissions);
 
-    const user = await User.findById(decoded.userId).select('isAdmin email name').lean();
-    if (!user) return next();
+    if (user.isAdmin) {
+      permissions.add('*');
+    }
 
     req.user = {
       _id: user._id,
       id: user._id,
       email: user.email,
-      name: user.name,
-      isAdmin: user.isAdmin || false,
+      isAdmin: user.isAdmin,
+      isAgent,
+      roles: resolvedRoles,
+      permissions: Array.from(permissions),
     };
 
-    console.log(`attachUser → User attached: ${req.user.email}`);
+    return req.user;
   } catch (err) {
-    console.error("attachUser error:", err);
+    return null;
   }
-  next();
 }
 
-async function requireAuthJWT(req, res, next) {
-  try {
-    const token = extractToken(req.headers.authorization);
-    if (!token) {
-      return res.status(401).json({ message: "Unauthorized", success: false });
-    }
 
-    let decoded;
-    try {
-      decoded = jwt.verify(token, JWT_SECRET);
-    } catch (err) {
-      return res.status(401).json({ message: "Unauthorized", success: false });
-    }
-
-    const user = await User.findById(decoded.userId).select('isAdmin');
-    if (!user) {
-      return res.status(401).json({ message: "Unauthorized", success: false });
-    }
-
+// Express middleware version
+async function attachUser(req, res, next) {
+  const user = await checkSession(req);
+  if (user) {
     req.user = user;
-    next();
-  } catch (err) {
-    console.error("requireAuthJWT error:", err);
-    return res.status(401).json({ message: "Unauthorized", success: false });
   }
+  next();
 }
 
 module.exports = {
   checkSession,
   attachUser,
-  requireAuthJWT
+  createSession,
+  deleteSession,
+  deleteAllUserSessions,
+  getUserSessions
 };

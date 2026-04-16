@@ -32,7 +32,7 @@ router.get('/check', async (req, res) => {
 });
 
 // Update OIDC Provider
-router.post('/oidc/update', async (req, res) => {
+router.post('/oidc/update', requirePermission(['settings::manage']), async (req, res) => {
   const { clientId, clientSecret, redirectUri, issuer, jwtSecret } = req.body;
   const conf = await Config.findOne({});
   await Config.updateOne({ _id: conf._id }, { sso_active: true, sso_provider: "oidc" });
@@ -49,7 +49,7 @@ router.post('/oidc/update', async (req, res) => {
 });
 
 // Update OAuth Provider
-router.post('/oauth/update', async (req, res) => {
+router.post('/oauth/update', requirePermission(['settings::manage']), async (req, res) => {
   const { name, clientId, clientSecret, redirectUri, tenantId, issuer, jwtSecret } = req.body;
   const conf = await Config.findOne({});
   await Config.updateOne({ _id: conf._id }, { sso_active: true, sso_provider: "oauth" });
@@ -78,7 +78,7 @@ router.post('/oauth/update', async (req, res) => {
 });
 
 // Delete auth config
-router.delete('/delete', async (req, res) => {
+router.delete('/delete', requirePermission(['settings::manage']), async (req, res) => {
   const conf = await Config.findOne({});
   await Config.updateOne({ _id: conf._id }, { sso_active: false, sso_provider: "" });
   await OAuthProvider.deleteMany({});
@@ -87,7 +87,7 @@ router.delete('/delete', async (req, res) => {
 });
 
 // Get Email Config and verify via Nodemailer
-router.get('/email', async (req, res) => {
+router.get('/email', requirePermission(['settings::view', 'settings::manage'], false), async (req, res) => {
   // Authorization check can be added if needed (not in original)
   const config = await Email.findOne({}, { active: 1, host: 1, port: 1, reply: 1, user: 1 });
 
@@ -107,7 +107,7 @@ router.get('/email', async (req, res) => {
 });
 
 // Update Email Provider Settings + Gmail OAuth setup
-router.put('/email', async (req, res) => {
+router.put('/email', requirePermission(['settings::manage']), async (req, res) => {
   const { host, active, port, reply: replyto, username, password, serviceType, clientId, clientSecret, redirectUri } = req.body;
   let email = await Email.findOne({});
   if (!email) {
@@ -167,7 +167,7 @@ router.get('/oauth/gmail', async (req, res) => {
 });
 
 // Disable/Enable Email
-router.delete('/email', async (req, res) => {
+router.delete('/email', requirePermission(['settings::manage']), async (req, res) => {
   await Email.deleteMany({});
   res.json({ success: true, message: "Email settings deleted!" });
 });

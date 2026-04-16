@@ -4,13 +4,9 @@ const EmailQueue = require('../../models/EmailQueue');
 
 async function sendComment(comment, title, ticketId, recipient) {
   try {
-    console.log('Attempting to send comment email for ticket:', ticketId);
-    const queue = await EmailQueue.findOne({ active: true, serviceType: 'custom' }); // Changed to custom
-    if (!queue) {
-      console.error('No active custom queue configured');
-      throw new Error("No active custom queue configured");
-    }
-    console.log('Found queue:', queue._id, 'for service:', queue.serviceType);
+    // Pick an active Gmail queue
+    const queue = await EmailQueue.findOne({ active: true, serviceType: 'gmail' });
+    if (!queue) throw new Error("No active Gmail queue configured");
 
     const subject = `Ticket #${ticketId}: ${title}`;
     const html = `
@@ -30,7 +26,7 @@ async function sendComment(comment, title, ticketId, recipient) {
     console.log("📧 Email sent:", mail.messageId);
     return true;
   } catch (err) {
-    console.error("❌ Error sending comment email:", err.message, 'Stack:', err.stack);
+    console.error("❌ Error sending comment email:", err);
     return false;
   }
 }

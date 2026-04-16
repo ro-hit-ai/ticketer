@@ -1,50 +1,11 @@
 const express = require('express');
 const { track } = require('../lib/hog');
-const { attachUser } = require('../lib/session'); // ✅ import attachUser
+const { requirePermission } = require('../lib/roles');
 const Role = require('../models/Role');
 const User = require('../models/User');
 const Config = require('../models/Config');
 
 const router = express.Router();
-
-// 🔹 Local requirePermission function
-function requirePermission(required = []) {
-  return (req, res, next) => {
-    console.log("🔍 requirePermission check start");
-    console.log("Headers:", req.headers.authorization);
-    console.log("req.user:", req.user);
-
-    if (!req.user) {
-      console.log("❌ No req.user found → Unauthorized");
-      return res.status(401).json({ message: "Unauthorized", success: false });
-    }
-
-    const userPerms = req.user.permissions || [];
-    console.log("User permissions:", userPerms);
-    console.log("Required permissions:", required);
-
-    // Admin shortcut
-    if (userPerms.includes('*')) {
-      console.log("✅ Admin override → allowed");
-      return next();
-    }
-
-    const hasPerm = required.some(perm => userPerms.includes(perm));
-    console.log("Permission match:", hasPerm);
-
-    if (!hasPerm) {
-      console.log("❌ Forbidden: missing required permissions");
-      return res.status(403).json({ error: 'Forbidden', success: false });
-    }
-
-    console.log("✅ Permission granted → continuing");
-    next();
-  };
-}
-
-
-// ✅ Attach user for ALL routes in this router
-router.use(attachUser);
 
 // ------------------- ROUTES ------------------- //
 
@@ -292,6 +253,7 @@ router.post(
 // Remove role from user
 router.post(
   "/remove",
+  requirePermission(["role::update"]),
   async (req, res) => {
     try {
       const { userId, roleId } = req.body;

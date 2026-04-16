@@ -2,12 +2,39 @@ const nodemailer = require('nodemailer');
 const { ConfidentialClientApplication } = require('@azure/identity');
 const Email = require('../models/Email');
 
-async function createTransportProvider() {
+function getEnvProvider() {
+  const host = process.env.SMTP_HOST || null;
+  const port = Number(process.env.SMTP_PORT || 465);
+  const user = process.env.SMTP_USER || null;
+  const pass = process.env.SMTP_PASS || null;
+  const reply = process.env.DEFAULT_FROM_EMAIL || user || null;
+
+  if (!host || !user || !pass || !reply) {
+    return null;
+  }
+
+  return {
+    active: true,
+    serviceType: 'other',
+    host,
+    port,
+    secure: String(process.env.SMTP_SECURE || '').toLowerCase() === 'true' || port === 465,
+    user,
+    pass,
+    reply,
+  };
+}
+
+async function createTransportProvider(providerOverride = null) {
   try {
-    const provider = await Email.findOne();
+    const provider = providerOverride || await Email.findOne() || getEnvProvider();
 
     if (!provider) {
       throw new Error("No email provider configured.");
+    }
+
+    if (provider.active === false) {
+      throw new Error("Email provider is disabled.");
     }
 
     if (provider.serviceType === "gmail") {
@@ -55,7 +82,7 @@ async function createTransportProvider() {
       return nodemailer.createTransport({
         host: provider.host,
         port: provider.port,
-        secure: provider.port === 465 ? true : false, // true for 465, false for other ports
+        secure: provider.secure ?? provider.port === 465,
         auth: {
           user: provider.user,
           pass: provider.pass,

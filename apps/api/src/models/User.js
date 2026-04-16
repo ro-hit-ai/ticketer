@@ -23,10 +23,6 @@ const userSchema = new mongoose.Schema({
     type: Boolean,
     default: false
   },
-  isAgent: {
-    type: Boolean,
-    default: false // New field for agents
-  },
   language: {
     type: String,
     default: 'en'
@@ -55,10 +51,6 @@ const userSchema = new mongoose.Schema({
   notify_ticket_assigned: {
     type: Boolean,
     default: true
-  },
-  permissions:{
-    type: [String], // e.g. ["ticket::create", "issue::read"]
-    default: []
   },
   roles: [{
     type: mongoose.Schema.Types.ObjectId,

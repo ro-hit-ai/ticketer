@@ -1,27 +1,25 @@
 const express = require('express');
 const router = express.Router();
 const TimeTracking = require('../models/TimeTracking');
+const { requirePermission } = require('../lib/roles');
 
 // Create a new entry
-router.post('/new', async (req, res) => {
+router.post('/new', requirePermission(['time_entry::create']), async (req, res) => {
   try {
-    const { time, ticket, title, user, startTime, endTime } = req.body;
+    const { time, ticket, title, user } = req.body;
     console.log(req.body);
 
     const timeEntry = new TimeTracking({
       time: Number(time),
       title,
       userId: user,
-      ticketId: ticket,
-      startTime: startTime ? new Date(startTime) : Date.now(), // default to now
-      endTime: endTime ? new Date(endTime) : null
+      ticketId: ticket
     });
 
     await timeEntry.save();
 
     res.send({
-      success: true,
-      data: timeEntry
+      success: true
     });
   } catch (error) {
     console.error(error);
@@ -33,11 +31,11 @@ router.post('/new', async (req, res) => {
 });
 
 // Get all entries
-router.get('/all', async (req, res) => {
+router.get('/', requirePermission(['time_entry::read']), async (req, res) => {
   try {
     const timeEntries = await TimeTracking.find()
-      .populate('userId', 'name email')
-      .populate('ticketId', 'ticketNumber title');
+      .populate('userId', 'name email') // Assuming you want user details
+      .populate('ticketId', 'ticketNumber title'); // Assuming you want ticket details
     
     res.send({
       success: true,
@@ -53,7 +51,7 @@ router.get('/all', async (req, res) => {
 });
 
 // Delete an entry
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', requirePermission(['time_entry::delete']), async (req, res) => {
   try {
     const { id } = req.params;
     

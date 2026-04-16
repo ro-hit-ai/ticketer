@@ -11,6 +11,31 @@ import { SessionProvider } from "./store/session";
 import "./styles/globals.css";
 
 document.documentElement.classList.add("dracula");
+
+if (typeof window !== "undefined" && "serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.getRegistrations().then((registrations) => {
+      registrations.forEach((registration) => {
+        registration.unregister().catch((error) => {
+          console.warn("Failed to unregister stale service worker:", error);
+        });
+      });
+    });
+
+    if ("caches" in window) {
+      caches.keys().then((keys) => {
+        keys
+          .filter((key) => key.includes("workbox") || key.includes("start-url") || key === "dev")
+          .forEach((key) => {
+            caches.delete(key).catch((error) => {
+              console.warn("Failed to delete stale cache:", key, error);
+            });
+          });
+      });
+    }
+  });
+}
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {

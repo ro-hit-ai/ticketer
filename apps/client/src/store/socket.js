@@ -5,6 +5,7 @@ import { useUser } from "./session";
 import Cookies from "js-cookie";
 
 const SOCKET_URL = "http://localhost:5004";
+const SOCKETS_ENABLED = import.meta.env.VITE_ENABLE_SOCKETS === "true";
 
 export const useSocket = () => {
   const { user } = useUser();
@@ -175,6 +176,10 @@ export const useSocket = () => {
   }, [user]);
 
   useEffect(() => {
+    if (!SOCKETS_ENABLED) {
+      return;
+    }
+
     if (!user?._id) {
       console.log("❌ No user ID, skipping socket connection");
       return;

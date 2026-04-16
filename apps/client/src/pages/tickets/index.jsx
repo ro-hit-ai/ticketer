@@ -94,7 +94,7 @@ const Tickets = () => {
 
   const fetchAgents = async () => {
     try {
-      const res = await fetchWithAuth(`/v1/auth/user/all`);
+      const res = await fetchWithAuth(`/v1/user/all`);
       const data = await res.json();
       if (data.success) setAgents(data.users);
     } catch (err) {

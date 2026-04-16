@@ -1,88 +1,117 @@
-// apps/api/src/lib/roles.js
 const User = require('../models/User');
+const Config = require('../models/Config');
 
 class InsufficientPermissionsError extends Error {
-  constructor(message = "Insufficient permissions") {
+  constructor(message = 'Insufficient permissions') {
     super(message);
-    this.name = "InsufficientPermissionsError";
+    this.name = 'InsufficientPermissionsError';
   }
 }
 
-function getUserPermissions(user) {
-  const perms = new Set();
-  if (user.roles && Array.isArray(user.roles)) {
-    user.roles.forEach(role => {
-      if (role.permissions && Array.isArray(role.permissions)) {
-        role.permissions.forEach(p => perms.add(p));
+function normalizeRequiredPermissions(requiredPermissions) {
+  if (!requiredPermissions) return [];
+  if (Array.isArray(requiredPermissions)) {
+    return requiredPermissions.filter(Boolean);
+  }
+  return [requiredPermissions];
+}
+
+function collectPermissions(user) {
+  const userPermissions = new Set();
+
+  if (Array.isArray(user?.permissions)) {
+    user.permissions.forEach((perm) => userPermissions.add(perm));
+  }
+
+  if (Array.isArray(user?.roles)) {
+    user.roles.forEach((role) => {
+      if (Array.isArray(role?.permissions)) {
+        role.permissions.forEach((perm) => userPermissions.add(perm));
       }
     });
   }
-  if (user.permissions && Array.isArray(user.permissions)) {
-    user.permissions.forEach(p => perms.add(p));
-  }
-  return perms;
+
+  return userPermissions;
 }
 
+// Check if user has required permissions
 function hasPermission(user, requiredPermissions, requireAll = true) {
-  if (!user) {
-    console.log('❌ hasPermission: No user provided');
-    return false;
-  }
-  if (user.isAdmin) {
-    console.log('✅ hasPermission: Admin override');
-    return true;
-  }
-  const permsToCheck = Array.isArray(requiredPermissions) ? requiredPermissions : [requiredPermissions];
-  const userPerms = getUserPermissions(user);
-  if (userPerms.has('*')) {
-    console.log('✅ hasPermission: Wildcard permission granted');
-    return true;
-  }
-  const hasPerm = requireAll
-    ? permsToCheck.every(p => userPerms.has(p))
-    : permsToCheck.some(p => userPerms.has(p));
-  console.log('🔍 hasPermission: Required:', permsToCheck, 'User perms:', Array.from(userPerms), 'Result:', hasPerm);
-  return hasPerm;
+  if (!user) return false;
+  if (user.isAdmin) return true;
+
+  const required = normalizeRequiredPermissions(requiredPermissions);
+  if (required.length === 0) return true;
+
+  const permissions = collectPermissions(user);
+  if (permissions.has('*')) return true;
+
+  return requireAll
+    ? required.every((perm) => permissions.has(perm))
+    : required.some((perm) => permissions.has(perm));
 }
 
 function requirePermission(requiredPermissions, requireAll = true) {
   return async (req, res, next) => {
     try {
-      console.log('🔍 requirePermission: Checking for', requiredPermissions);
       if (!req.user) {
-        console.log('❌ requirePermission: No user in request');
-        return res.status(401).json({ message: "Unauthorized", success: false });
-      }
-
-      if (req.user.roles && req.user.roles.length > 0 && req.user.roles[0].permissions === undefined) {
-        console.log('🔍 requirePermission: Populating roles for user:', req.user.email);
-        const userWithRoles = await User.findById(req.user._id).populate('roles').lean();
-        if (userWithRoles) {
-          req.user.roles = userWithRoles.roles;
-          req.user.permissions = userWithRoles.permissions || [];
-        }
-      }
-
-      if (!hasPermission(req.user, requiredPermissions, requireAll)) {
-        console.log('❌ requirePermission: Insufficient permissions for', req.user.email);
-        return res.status(403).json({
-          message: "You do not have the required permission to access this resource.",
+        return res.status(401).json({
           success: false,
+          message: 'Unauthorized: missing authenticated user context',
         });
       }
 
-      console.log('✅ requirePermission: Permission granted for', req.user.email);
-      next();
+      // Allow when no permissions are explicitly required
+      const required = normalizeRequiredPermissions(requiredPermissions);
+      if (required.length === 0) {
+        return next();
+      }
+
+      // Admin and wildcard bypass
+      if (req.user.isAdmin || (Array.isArray(req.user.permissions) && req.user.permissions.includes('*'))) {
+        return next();
+      }
+
+      // Fetch fresh user+roles for up-to-date permissions
+      const userWithRoles = await User.findById(req.user._id).populate('roles').lean().exec();
+      if (!userWithRoles) {
+        return res.status(401).json({
+          success: false,
+          message: 'Unauthorized: user not found',
+        });
+      }
+
+      // Merge token-level permissions (if present) with DB role permissions
+      userWithRoles.permissions = Array.from(
+        new Set([...(req.user.permissions || []), ...(userWithRoles.permissions || [])])
+      );
+
+      const config = await Config.findOne({}).lean().exec();
+      const rolesActive = Boolean(config?.roles_active);
+
+      if (!rolesActive) {
+        return next();
+      }
+
+      if (!hasPermission(userWithRoles, required, requireAll)) {
+        return res.status(403).json({
+          success: false,
+          message: `Forbidden: missing required permission(s): ${required.join(', ')}`,
+        });
+      }
+
+      return next();
     } catch (err) {
-      console.error('❌ requirePermission error:', err.message, err);
-      res.status(500).json({ message: "Internal Server Error", success: false });
+      console.error('Permission check error:', err);
+      return res.status(500).json({
+        success: false,
+        message: 'Internal Server Error while checking permissions',
+      });
     }
   };
 }
 
 module.exports = {
   InsufficientPermissionsError,
-  getUserPermissions,
   hasPermission,
-  requirePermission
+  requirePermission,
 };

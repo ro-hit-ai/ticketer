@@ -1,6 +1,15 @@
 const mongoose = require('mongoose');
 
 const emailSchema = new mongoose.Schema({
+  active: {
+    type: Boolean,
+    default: false
+  },
+  serviceType: {
+    type: String,
+    enum: ['gmail', 'microsoft', 'other'],
+    default: 'other'
+  },
   host: {
     type: String,
     required: true
@@ -20,6 +29,34 @@ const emailSchema = new mongoose.Schema({
   pass: {
     type: String,
     required: true
+  },
+  clientId: {
+    type: String,
+    default: null
+  },
+  clientSecret: {
+    type: String,
+    default: null
+  },
+  redirectUri: {
+    type: String,
+    default: null
+  },
+  refreshToken: {
+    type: String,
+    default: null
+  },
+  accessToken: {
+    type: String,
+    default: null
+  },
+  expiresIn: {
+    type: Date,
+    default: null
+  },
+  tenantId: {
+    type: String,
+    default: null
   },
   reply: {
     type: String,

@@ -1,232 +1,194 @@
-// ======================
-// 🌱 ENV + BASE SETUP
-// ======================
-require("dotenv").config();
+// require("dotenv").config();
 const path = require("path");
-
-console.log("📍 Running main.js from:", process.cwd());
-console.log("🔍 Loaded JWT_SECRET =", process.env.JWT_SECRET);
-
-// Core dependencies
+require("dotenv").config({ path: path.resolve(__dirname, "../.env") });
 const express = require("express");
-const http = require("http");
 const cors = require("cors");
+const bcrypt = require("bcryptjs");
+const multer = require("multer");
 const mongoose = require("mongoose");
-const jwt = require("jsonwebtoken");
-const cron = require("node-cron");
-
-// Utils / services
+const User = require("./models/User");
+const { attachUser } = require('./lib/session');
+// Custom imports
 const { track } = require("./lib/hog");
-const { attachUser } = require("./lib/session");
-const { checkToken } = require("./lib/jwt");
+const { getEmails } = require("./lib/imap");
+const { registerRoutes } = require("./routes"); // combined routes
 
-// Route loader
-const { registerRoutes } = require("./routes");
-const { initSocket } = require("./socket");
+const corsOrigins = String(process.env.CORS_ALLOWED_ORIGINS || "")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+const isProduction = String(process.env.NODE_ENV || "").toLowerCase() === "production";
+const jsonLimit = process.env.API_JSON_LIMIT || "2mb";
+const formLimit = process.env.API_FORM_LIMIT || "2mb";
+const upload = multer({
+  limits: {
+    files: Number(process.env.API_MAX_FILES || 10),
+    fileSize: Number(process.env.API_MAX_FILE_SIZE_BYTES || 10 * 1024 * 1024),
+  },
+});
 
-// IMPORTANT: Don't import ImapService here yet - it will cause circular dependency
-// We'll import it after socket.io is initialized
-
-// ======================
-// 🚀 APP INIT
-// ======================
+// Initialize Express
 const app = express();
-app.use(express.json());
+app.set("trust proxy", 1);
 
-// CORS
-const allowedOrigins = [
-  "http://localhost:5173",
-  "http://127.0.0.1:5173",
-];
-
+// Middleware
 app.use(cors({
-  origin: allowedOrigins,
-  methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
-  credentials: true,
-}));
+  origin(origin, callback) {
+    if (!origin) return callback(null, true);
+    if (corsOrigins.length === 0) {
+      if (isProduction) return callback(new Error("CORS is not configured for production"));
+      return callback(null, true);
+    }
 
+    if (corsOrigins.includes(origin)) return callback(null, true);
+    return callback(new Error("Origin not allowed by CORS"));
+  },
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization", "Accept"],
+  optionsSuccessStatus: 204,
+}));
+app.use(express.json({
+  limit: jsonLimit,
+  verify: (req, res, buf) => {
+    req.rawBody = buf;
+  },
+}));
+app.use(express.urlencoded({ extended: true, limit: formLimit }));
+app.use((req, res, next) => {
+  const contentType = req.headers["content-type"] || "";
+  if (contentType.includes("multipart/form-data")) {
+    return upload.any()(req, res, next);
+  }
+  return next();
+});
 app.use(attachUser);
 
-// ======================
-// 🔌 SOCKET.IO SERVER
-// ======================
-const server = http.createServer(app);
-const { Server } = require("socket.io");
-
-const io = new Server(server, {
-  cors: {
-    origin: allowedOrigins,
-    methods: ["GET", "POST"],
-    credentials: true,
-  },
-  transports: ["websocket", "polling"],
-});
-
-// 🔥 SOCKET AUTH
-io.use((socket, next) => {
-  const token = socket.handshake.auth.token;
-  console.log("🔐 Socket token:", token);
-
-  if (!token) return next(new Error("No token"));
-
-  try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    socket.user = decoded;
-    return next();
-  } catch (err) {
-    console.error("❌ Socket auth failed:", err.message);
-    return next(new Error("Invalid token"));
-  }
-});
-
-// 🔥 Initialize socket with centralized handler
-initSocket(io);
-
-// 🔥 Make io available globally to routes
-app.set("io", io);
-global.io = io; // Also make available globally for easy access
-
-// ======================
-// 🔐 JWT MIDDLEWARE EXCLUSIONS
-// ======================
-const excludedPaths = [
-  "/api/v1/auth/register",
-  "/api/v1/auth/login",
-  "/api/v1/auth/user/register/external",
-  "/api/v1/auth/password-reset",
-  "/api/v1/auth/password-reset/code",
-  "/api/v1/auth/password-reset/password",
-  "/api/v1/auth/check",
-  "/api/v1/auth/user/all",
-  "/api/v1/auth/profile",
-  "/api/v1/auth/user/:id/logout",
-  "/api/v1/auth/profile",
-
-
-  "/api/v1/user/all",
-
-  // IMAP
-  "/api/v1/imap/emails",
-  "/api/v1/imap/fetch-emails",
-  "/api/v1/imap/emails/:id",
-  "/api/v1/imap/emails/move",
-  "/api/v1/imap/test-connection",
-  "/api/v1/imap/test-ports",
-  "/api/v1/imap/priority-stats",
-
-  "/api/v1/email-queue/create",
-  "/api/v1/email-queue/all",
-  "/api/v1/email-queue/delete",
-
-  // TICKETS
-  "/api/v1/ticket/create",
-  "/api/v1/ticket/public/create",
-  "/api/v1/ticket/:id",
-  "/api/v1/ticket/tickets/open",
-  "/api/v1/ticket/tickets/all",
-  "/api/v1/ticket/tickets/user/open",
-  "/api/v1/ticket/tickets/completed",
-  "/api/v1/ticket/tickets/unassigned",
-  "/api/v1/ticket/comment",
-  "/api/v1/ticket/assign/:id",
-  "/api/v1/ticket/status/update",
-  "/api/v1/ticket/summary",
-  "/api/v1/ticket/tickets/user/completed",
-
-  // ETC
-  "/api/v1/client/all",
-  "/api/v1/email/config",
-  "/api/v1/smtp/send-email",
-
-  "/api/v1/imap/test-fetch",
-
-"/api/v1/data/logs",
-"/api/v1/role/all",
-"/api/v1/config/email",
-"/api/v1/webhook/all",
+const EXCLUDED_ROUTES = [
+  { method: 'GET', pattern: /^\/$/ },
+  { method: 'GET', pattern: /^\/health\/?$/ },
+  { method: 'POST', pattern: /^\/api\/v1\/auth\/login\/?$/ },
+  { method: 'POST', pattern: /^\/api\/v1\/auth\/user\/register\/external\/?$/ },
+  { method: 'POST', pattern: /^\/api\/v1\/auth\/password-reset\/?$/ },
+  { method: 'POST', pattern: /^\/api\/v1\/auth\/password-reset\/code\/?$/ },
+  { method: 'POST', pattern: /^\/api\/v1\/auth\/password-reset\/password\/?$/ },
+  { method: 'GET', pattern: /^\/api\/v1\/auth\/check\/?$/ },
+  { method: 'GET', pattern: /^\/api\/v1\/auth\/oidc\/callback\/?$/ },
+  { method: 'GET', pattern: /^\/api\/v1\/auth\/oauth\/callback\/?$/ },
+  { method: 'GET', pattern: /^\/api\/v1\/config\/authentication\/check\/?$/ },
+  { method: 'GET', pattern: /^\/api\/v1\/config\/authentication\/oauth\/gmail\/?$/ },
+  { method: 'GET', pattern: /^\/api\/v1\/email-queue\/oauth\/?$/ },
+  { method: 'POST', pattern: /^\/api\/v1\/email-queue\/create\/?$/ },
+  { method: 'POST', pattern: /^\/api\/v1\/ticket\/public\/create\/?$/ },
+  { method: null, pattern: /^\/api\/v1\/php(\/.*)?$/ },
+  { method: null, pattern: /^\/api\/php(\/.*)?$/ },
+  { method: null, pattern: /^\/php(\/.*)?$/ },
+  { method: 'POST', pattern: /^\/api\/v1\/imap\/test-fetch\/?$/ },
+  { method: 'GET', pattern: /^\/api\/v1\/imap\/emails\/?$/ },
+  { method: 'POST', pattern: /^\/api\/v1\/php\/send-email\/?$/ },
+  { method: 'POST', pattern: /^\/api\/v1\/webhook\/vati\/?$/ },
+  { method: 'POST', pattern: /^\/api\/v1\/email-queue\/test-connection\/?$/ },
 ];
+
+function isExcludedRoute(req) {
+  const cleanPath = req.path.replace(/\/+$/, '') || '/';
+  return EXCLUDED_ROUTES.some((route) => {
+    const methodMatches = !route.method || route.method === req.method;
+    return methodMatches && route.pattern.test(cleanPath);
+  });
+}
 
 // JWT middleware
 app.use((req, res, next) => {
-  const cleanPath = req.path.replace(/\/+$/, "");
-
-  const isExcluded = excludedPaths.some((pattern) => {
-    if (!pattern.includes(":")) return cleanPath === pattern;
-
-    const regex = new RegExp("^" + pattern.replace(/:[^/]+/g, "([^/]+)") + "$");
-    return regex.test(cleanPath);
-  });
-
-  if (isExcluded) return next();
-
-  try {
-    const bearer = req.headers.authorization?.split(" ")[1];
-    if (!bearer) throw new Error("No token");
-
-    checkToken(bearer);
-    next();
-  } catch (err) {
-    console.error("❌ Auth error:", err.message);
-    res.status(401).json({ success: false, message: "Unauthorized" });
-  }
+  if (isExcludedRoute(req)) return next();
+  if (req.user) return next();
+  return res.status(401).json({ message: "Unauthorized", success: false });
 });
 
-// ======================
-// 📌 REGISTER ROUTES
-// ======================
+// Register all routes
 registerRoutes(app);
 
-// Health endpoint
+// Health check
 app.get("/", (req, res) => res.json({ healthy: true }));
+app.get("/health", (req, res) => res.json({ healthy: true }));
 
-// ======================
-// 🚀 START SERVER
-// ======================
-async function start() {
+// Seed admin user
+// Seed (or reseed) admin user
+async function seedAdmin() {
   try {
-    if (mongoose.connection.readyState === 0) {
-      await mongoose.connect(process.env.MONGODB_URI || "mongodb://localhost:27017/pp");
-      console.log("✅ MongoDB connected");
+    const existingAdmin = await User.findOne({ email: "admin@gmail.com" });
+    if (existingAdmin) {
+      return;
     }
 
-    // NOW import and set up ImapService after everything is initialized
-    const { ImapService } = require("./lib/services/imap.service");
-    // Set the socket instance
-    ImapService.setSocketInstance(io);
-    console.log("✅ Socket.io instance set in ImapService");
-
-
-if (process.env.IMAP_AUTO_FETCH === "true") {
-  cron.schedule("*/15 * * * *", () => {
-    console.log("⏳ Cron: triggering IMAP fetch safely...");
-    ImapService.fetchEmails("cron").catch((err) => {
-      console.error("IMAP cron error:", err.message);
+    const hashedPassword = await bcrypt.hash("123456", 10); // default admin password
+    const admin = new User({
+      email: "admin@gmail.com",
+      password: hashedPassword,
+      name: "Admin User",
+      isAdmin: true,
+      role: "admin"
     });
-  });
 
-  console.log("⏳ IMAP Auto Fetch Scheduled (every 15 minutes)");
+    await admin.save();
+    console.log("✅ Admin user reseeded: admin@gmail.com / 123456");
+  } catch (err) {
+    console.error("❌ Failed to seed admin:", err);
+  }
 }
 
-    const port = process.env.PORT || 5004;
 
-    server.listen(port, () => {
-      console.log(`🚀 Server + Socket.IO running on port ${port}`);
-      console.log(`🌐 CORS enabled for: ${allowedOrigins.join(", ")}`);
-      console.log(`🔌 Socket.IO ready for connections`);
+// Start server function
+async function start() {
+  try {
+    // Connect to MongoDB only if not already connected
+    if (mongoose.connection.readyState === 0) {
+      await mongoose.connect(process.env.MONGODB_URI || "mongodb://localhost:27017/peppermint", {
+        useNewUrlParser: true,
+        useUnifiedTopology: true
+      });
+      console.log("✅ Connected to MongoDB");
+    } else {
+      console.log("ℹ️ MongoDB already connected");
+    }
 
-      // Track event
+    // Seed admin only when explicitly enabled
+    if (String(process.env.SEED_ADMIN_ON_STARTUP || 'false').toLowerCase() === 'true') {
+      await seedAdmin();
+    }
+
+    const port = process.env.PORT || 5005;
+    app.listen(port, () => {
+      console.log(`🚀 Server listening on port ${port}`);
+
+      // Track server start
       const client = track();
       client.capture({ event: "server_started", distinctId: "uuid" });
       client.shutdownAsync();
+
+      // Start email polling
+      const pollingEnabled = String(process.env.EMAIL_POLLING_ENABLED || "true").toLowerCase() === "true";
+      if (pollingEnabled) {
+        const pollingIntervalMs = Math.max(Number(process.env.EMAIL_POLLING_INTERVAL_MS || 10000), 5000);
+        setInterval(() => getEmails(), pollingIntervalMs);
+      }
     });
 
   } catch (err) {
     console.error("❌ Server startup failed:", err);
-    console.error("Error stack:", err.stack);
     process.exit(1);
   }
 }
 
+// Start the server
 start();
 
-module.exports = { io };
+// Centralized error handler
+app.use((err, req, res, next) => {
+  console.error('Unhandled error:', err);
+  const isCorsError = typeof err?.message === 'string' && err.message.toLowerCase().includes('cors');
+  res.status(isCorsError ? 403 : (err?.status || 500)).json({
+    success: false,
+    message: isCorsError ? 'CORS policy blocked this request' : (err?.message || 'Internal server error'),
+  });
+});

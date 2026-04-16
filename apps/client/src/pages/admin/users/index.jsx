@@ -132,40 +132,54 @@ const Table = ({ columns, data }) => {
             className="min-w-full divide-y divide-gray-200"
           >
             <thead className="bg-gray-50">
-              {headerGroups.map((headerGroup) => ( // ✅ Fixed to headerGroups
-                <tr
-                  {...headerGroup.getHeaderGroupProps()}
-                  key={headerGroup.headers.map((header) => header.id).join("-")}
-                >
-                  {headerGroup.headers.map((column) => (
-                    <th
-                      key={column.id}
-                      {...column.getHeaderProps()}
-                      className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
-                    >
-                      {column.render("Header")}
-                      <div>
-                        {column.canFilter ? column.render("Filter") : null}
-                      </div>
-                    </th>
-                  ))}
-                </tr>
-              ))}
+              {headerGroups.map((headerGroup) => {
+                const { key: headerGroupKey, ...headerGroupProps } = headerGroup.getHeaderGroupProps();
+
+                return (
+                  <tr
+                    key={headerGroupKey || headerGroup.headers.map((header) => header.id).join("-")}
+                    {...headerGroupProps}
+                  >
+                    {headerGroup.headers.map((column) => {
+                      const { key: columnKey, ...columnProps } = column.getHeaderProps();
+
+                      return (
+                        <th
+                          key={columnKey || column.id}
+                          {...columnProps}
+                          className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
+                        >
+                          {column.render("Header")}
+                          <div>
+                            {column.canFilter ? column.render("Filter") : null}
+                          </div>
+                        </th>
+                      );
+                    })}
+                  </tr>
+                );
+              })}
             </thead>
             <tbody {...getTableBodyProps()}>
               {page.map((row) => {
                 prepareRow(row);
+                const { key: rowKey, ...rowProps } = row.getRowProps();
+
                 return (
-                  <tr key={row.id} {...row.getRowProps()} className="bg-white">
-                    {row.cells.map((cell) => (
-                      <td
-                        key={cell.column.id}
-                        className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900"
-                        {...cell.getCellProps()}
-                      >
-                        {cell.render("Cell")}
-                      </td>
-                    ))}
+                  <tr key={rowKey || row.id} {...rowProps} className="bg-white">
+                    {row.cells.map((cell) => {
+                      const { key: cellKey, ...cellProps } = cell.getCellProps();
+
+                      return (
+                        <td
+                          key={cellKey || `${row.id}-${cell.column.id}`}
+                          className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900"
+                          {...cellProps}
+                        >
+                          {cell.render("Cell")}
+                        </td>
+                      );
+                    })}
                   </tr>
                 );
               })}
@@ -344,9 +358,9 @@ const Users = () => {
                     <Table columns={columns} data={data.users || []} />
                   </div>
                   <div className="sm:hidden">
-                    {data.users?.map((user) => (
+                    {data.users?.map((user, index) => (
                       <div
-                        key={user.id}
+                        key={user.id || user._id || user.email || index}
                         className="flex flex-col text-center bg-white rounded-lg shadow mt-4"
                       >
                         <div className="flex-1 flex flex-col p-8">

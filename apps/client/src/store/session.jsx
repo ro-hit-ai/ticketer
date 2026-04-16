@@ -1,36 +1,43 @@
 // src/store/session.jsx
 import React, { useState, useEffect, useCallback, useContext, createContext, useRef } from "react";
-import { useNavigate, useLocation } from "react-router-dom";
 import Cookies from "js-cookie";
 import { apiUrl } from "../utils/api";
 
 const SessionContext = createContext(null);
 
 export const SessionProvider = ({ children }) => {
-  const navigate = useNavigate();
-  const location = useLocation();
   const refreshInProgress = useRef(false);
+  const initInProgress = useRef(false);
+  const storedUser = (() => {
+    try {
+      const rawUser = localStorage.getItem("user");
+      return rawUser ? JSON.parse(rawUser) : null;
+    } catch {
+      return null;
+    }
+  })();
+  const storedToken =
+    (typeof window !== "undefined" &&
+      (Cookies.get("session") || localStorage.getItem("session"))) ||
+    null;
 
-  const [user, setUser] = useState(null);
-  const [status, setStatus] = useState("loading"); // "loading" | "authenticated" | "unauthenticated"
+  const [user, setUser] = useState(storedUser);
+  const [status, setStatus] = useState(
+    storedUser ? "authenticated" : storedToken ? "loading" : "unauthenticated"
+  ); // "loading" | "authenticated" | "unauthenticated"
   const [error, setError] = useState(null);
 
   // -----------------------------------------------------------------
   // LOGOUT
   // -----------------------------------------------------------------
-  const logout = useCallback(
-    (force = false) => {
-      Cookies.remove("session", { path: "/" });
-      localStorage.removeItem("user");
-      setUser(null);
-      setStatus("unauthenticated");
-      setError(null);
-      if (force || location.pathname !== "/auth/login") {
-        navigate("/auth/login", { replace: true });
-      }
-    },
-    [navigate, location]
-  );
+  const logout = useCallback(() => {
+    Cookies.remove("session", { path: "/" });
+    localStorage.removeItem("session");
+    localStorage.removeItem("user");
+    setUser(null);
+    setStatus("unauthenticated");
+    setError(null);
+  }, []);
 
   // -----------------------------------------------------------------
   // HANDLE PROFILE RESPONSE
@@ -46,7 +53,7 @@ export const SessionProvider = ({ children }) => {
 
     const data = await response.json();
 
-    if (data.success && data.user) {
+    if (data.user) {
       const normalizedUser = {
         ...data.user,
         _id: data.user.id || data.user._id, // ← CRITICAL
@@ -63,8 +70,6 @@ export const SessionProvider = ({ children }) => {
       if (data.token) {
         Cookies.set("session", data.token, { sameSite: "lax" });
       }
-
-      console.log("SESSION AUTHENTICATED", normalizedUser);
       return normalizedUser;
     } else {
       throw new Error(data.message || "Invalid profile data");
@@ -78,15 +83,26 @@ export const SessionProvider = ({ children }) => {
     if (refreshInProgress.current) return null;
     refreshInProgress.current = true;
 
-    const token = Cookies.get("session");
+    let token = Cookies.get("session") || localStorage.getItem("session");
     if (!token) {
       setStatus("unauthenticated");
       refreshInProgress.current = false;
       return null;
     }
+    // Ensure cookie exists even if token came from localStorage (domain mismatch fix)
+    if (!Cookies.get("session")) {
+      Cookies.set("session", token, {
+        secure: window.location.protocol === "https:",
+        sameSite: "lax",
+        path: "/",
+        expires: 7,
+      });
+    }
 
     try {
-      setStatus("loading");
+      setStatus((currentStatus) =>
+        currentStatus === "authenticated" ? currentStatus : "loading"
+      );
       const response = await fetch(apiUrl("/v1/auth/profile"), {
         method: "GET",
         headers: {
@@ -101,7 +117,8 @@ export const SessionProvider = ({ children }) => {
       return result;
     } catch (err) {
       console.error("refreshSession failed:", err);
-      logout(true);
+      setStatus((currentStatus) => (currentStatus === "authenticated" ? currentStatus : "unauthenticated"));
+      setError(err);
       refreshInProgress.current = false;
       return null;
     }
@@ -114,18 +131,29 @@ export const SessionProvider = ({ children }) => {
     let isMounted = true;
 
     const initSession = async () => {
-      const token = Cookies.get("session");
+      if (initInProgress.current) return;
+      initInProgress.current = true;
+      let token = Cookies.get("session") || localStorage.getItem("session");
 
       if (!token) {
         if (isMounted) {
           setStatus("unauthenticated");
-          navigate("/auth/login", { replace: true });
         }
+        initInProgress.current = false;
         return;
+      }
+      if (!Cookies.get("session")) {
+        Cookies.set("session", token, {
+          secure: window.location.protocol === "https:",
+          sameSite: "lax",
+          path: "/",
+          expires: 7,
+        });
       }
 
       try {
         setStatus("loading");
+        setError(null);
         const response = await fetch(apiUrl("/v1/auth/profile"), {
           method: "GET",
           headers: {
@@ -137,23 +165,27 @@ export const SessionProvider = ({ children }) => {
 
         if (!isMounted) return;
 
-        if (!response.ok) {
+        if (response.status === 401) {
           Cookies.remove("session", { path: "/" });
+          localStorage.removeItem("session");
           localStorage.removeItem("user");
           setStatus("unauthenticated");
-          navigate("/auth/login", { replace: true });
           return;
+        }
+
+        if (!response.ok) {
+          throw new Error(`Profile fetch failed: ${response.status}`);
         }
 
         await handleProfileResponse(response);
       } catch (err) {
         if (isMounted) {
           console.error("Session init failed:", err);
-          Cookies.remove("session", { path: "/" });
-          localStorage.removeItem("user");
+          setError(err);
           setStatus("unauthenticated");
-          navigate("/auth/login", { replace: true });
         }
+      } finally {
+        initInProgress.current = false;
       }
     };
 
@@ -162,7 +194,7 @@ export const SessionProvider = ({ children }) => {
     return () => {
       isMounted = false;
     };
-  }, [navigate]); // ← ONLY ONCE
+  }, []);
 
   // -----------------------------------------------------------------
   // FETCH WITH AUTH
@@ -229,20 +261,5 @@ export const SessionProvider = ({ children }) => {
 export const useUser = () => {
   const ctx = useContext(SessionContext);
   if (!ctx) throw new Error("useUser must be used within SessionProvider");
-
-  if (ctx.loading) {
-    return {
-      user: null,
-      loading: true,
-      error: null,
-      isAdmin: false,
-      isAgent: false,
-      imap_enabled: false,
-      fetchWithAuth: () => Promise.reject(new Error("Session loading")),
-      refreshSession: () => Promise.reject(new Error("Session loading")),
-      logout: () => {},
-    };
-  }
-
   return ctx;
 };

@@ -1,5 +1,5 @@
 // // checkPassword.js
-// const bcrypt = require('bcrypt');
+// const bcrypt = require('bcryptjs');
 
 // const plainPasswords = ['12356', '123456'];
 // const storedHash = '$2y$10$JPyh.ywTnSFkhu3ZRf9oOOi/CN3kOmbX0msOw3nbEfhl2WHTpme.O';

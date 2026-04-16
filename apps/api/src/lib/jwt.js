@@ -1,15 +1,13 @@
-// apps/api/src/lib/checkToken.js
 const jwt = require("jsonwebtoken");
+const { getJwtSecret } = require("./jwtSecret");
 
 function checkToken(token) {
-  const bearer = token;
+  const secret = getJwtSecret();
+  if (!secret) {
+    throw new Error("JWT secret not configured");
+  }
 
-  const b64string = process.env.SECRET;
-  const buf = Buffer.from(b64string, "base64"); // Ta-da
-
-  const verified = jwt.verify(bearer, buf);
-
-  return verified;
+  return jwt.verify(token, secret);
 }
 
 module.exports = { checkToken };

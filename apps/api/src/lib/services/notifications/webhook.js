@@ -9,8 +9,8 @@ const router = express.Router();
 
 // Create a new webhook
 router.post(
-  '/create',
-  // requirePermission(['webhooks::create']),
+  '/api/v1/webhooks',
+  requirePermission(['webhooks::create']),
   async (req, res) => {
     try {
       const user = await checkSession(req);
@@ -62,8 +62,8 @@ router.post(
 
 // Get all webhooks
 router.get(
-  '/all',
-  // requirePermission(['webhooks::read']),
+  '/api/v1/webhooks',
+  requirePermission(['webhooks::read']),
   async (req, res) => {
     try {
       const webhooks = await Webhook.find({})

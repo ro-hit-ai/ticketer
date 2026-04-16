@@ -1,5 +1,5 @@
 // generate-password.js
-const bcrypt = require('bcrypt');
+const bcrypt = require('bcryptjs');
 
 async function generatePasswordHash() {
   const password = '1234';

@@ -1,11 +1,14 @@
 // src/layouts/Header.jsx
 import React from "react";
-import { Link } from "react-router-dom";
-import { Bell, Search, HelpCircle } from "lucide-react";
+import { Link, useLocation } from "react-router-dom";
+import { Bell, Search, HelpCircle, UserCircle2 } from "lucide-react";
 import AccountDropdown from "../components/AccountDropdown";
 import { SidebarTrigger } from "../shadcn/ui/sidebar";
 
 function Header({ user }) {
+  const location = useLocation();
+  const isPortal = location.pathname.startsWith("/portal");
+
   return (
     <header className="sticky top-0 z-30 flex items-center gap-x-4 border-b bg-[var(--fd-header-bg)] px-4 h-14 sm:gap-x-6">
       {/* LEFT: Sidebar toggle + Search */}
@@ -24,13 +27,34 @@ function Header({ user }) {
 
       {/* RIGHT: Actions */}
       <div className="flex items-center gap-3">
-        <button
-          type="button"
-          className="hidden sm:inline-flex h-8 px-2 items-center gap-1 text-xs rounded-md border bg-background hover:bg-muted"
-        >
-          <HelpCircle className="h-3.5 w-3.5" />
-          Help
-        </button>
+        {isPortal ? (
+          <>
+            <Link
+              to="/notifications"
+              className="inline-flex h-9 w-9 items-center justify-center rounded-full border bg-background text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              title="Support"
+            >
+              <HelpCircle className="h-4 w-4" />
+              <span className="sr-only">Support</span>
+            </Link>
+            <Link
+              to="/portal/profile"
+              className="inline-flex h-9 w-9 items-center justify-center rounded-full border bg-background text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              title="Profile"
+            >
+              <UserCircle2 className="h-4 w-4" />
+              <span className="sr-only">Profile</span>
+            </Link>
+          </>
+        ) : (
+          <button
+            type="button"
+            className="hidden sm:inline-flex h-8 px-2 items-center gap-1 text-xs rounded-md border bg-background hover:bg-muted"
+          >
+            <HelpCircle className="h-3.5 w-3.5" />
+            Help
+          </button>
+        )}
 
         <Link to="/notifications" className="relative">
           <span className="sr-only">View notifications</span>

@@ -1,7 +1,9 @@
 // src/pages/portal/Inbox.jsx
-import React, { useState, useEffect, useCallback, useRef } from "react";
-import { useSearchParams, Navigate } from "react-router-dom";
+import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { useNavigate, useSearchParams, Navigate } from "react-router-dom";
 import {
+  ArrowUpRight,
+  CheckCircle2,
   Mail,
   Reply,
   RefreshCw,
@@ -13,31 +15,65 @@ import {
   Filter,
   Paperclip,
   Download,
+  CheckCheck,
+  Flag,
+  Send,
+  MoreHorizontal,
 } from "lucide-react";
 import { toast } from "react-toastify";
 import { useUser } from "../store/session.jsx";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "../shadcn/ui/dialog.jsx";
+import { Textarea } from "../shadcn/ui/textarea.jsx";
 
-const FOLDERS = ["inbox", "sent", "processed", "trash", "drafts", "resolved"];
+const FOLDER_LABELS = {
+  inbox: "Inbox",
+  sent: "Sent",
+  processed: "Processed",
+  trash: "Trash",
+  drafts: "Drafts",
+  resolved: "Resolved",
+  received: "Received",
+  internal: "Internal",
+};
+
+const HEADER_FILTERS = [
+  { title: "Inbox", folder: "inbox" },
+  { title: "Sent", folder: "sent" },
+  { title: "Processed", folder: "processed" },
+];
+
+const CRM_STATUSES = ["Open", "Pending", "Closed"];
+const CRM_PRIORITIES = ["Low", "Medium", "High"];
+const AGENT_OPTIONS = ["Unassigned", "Ava Patel", "Marcus Reed", "Noah Chen", "Sofia Kim"];
+
+function classNames(...classes) {
+  return classes.filter(Boolean).join(" ");
+}
+
+function extractEmailAddress(value) {
+  const raw = String(value || "").trim();
+  const match = raw.match(/<([^>]+)>/);
+  if (match?.[1]) return match[1].trim();
+  return raw;
+}
+
+function extractTicketIdFromSubject(subject) {
+  const value = String(subject || "");
+  const match = value.match(/(?:ref:|#)([0-9a-fA-F-]{24,36})/i);
+  return match?.[1] || null;
+}
 
 const Inbox = () => {
-  const { user, fetchWithAuth, imap_enabled, loading: sessionLoading } =
+  const { fetchWithAuth, imap_enabled, loading: sessionLoading } =
     useUser();
-
-  // 1) Session loading
-  if (sessionLoading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600" />
-        <p className="ml-2">Loading session...</p>
-      </div>
-    );
-  }
-
-  // 2) IMAP disabled → redirect
-  if (!imap_enabled) {
-    return <Navigate to="/portal" replace />;
-  }
-
+  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
 
   const [emails, setEmails] = useState([]);
@@ -54,10 +90,19 @@ const Inbox = () => {
   const [limit] = useState(20);
   const [unreadOnly, setUnreadOnly] = useState(false);
   const [selectedEmails, setSelectedEmails] = useState([]);
-
-  // Stats (still fetched but not visually shown)
-  const [stats, setStats] = useState({ unseen: 0, pending: 0 });
-  const [statsError, setStatsError] = useState(false);
+  const [composeOpen, setComposeOpen] = useState(false);
+  const [composeMode, setComposeMode] = useState("new");
+  const [composeSending, setComposeSending] = useState(false);
+  const [composeForm, setComposeForm] = useState({
+    to: "",
+    subject: "",
+    body: "",
+  });
+  const [assignedAgent, setAssignedAgent] = useState("Unassigned");
+  const [ticketStatus, setTicketStatus] = useState("Open");
+  const [priorityValue, setPriorityValue] = useState("Medium");
+  const [internalNotes, setInternalNotes] = useState("");
+  const [moreActionsOpen, setMoreActionsOpen] = useState(false);
 
   const searchTimeoutRef = useRef(null);
 
@@ -79,6 +124,7 @@ const Inbox = () => {
           limit: limit.toString(),
         });
 
+        if (currFolder) params.append("folder", currFolder);
         if (currSearch) params.append("q", currSearch);
         if (currUnread) params.append("unreadOnly", "true");
 
@@ -127,38 +173,6 @@ const Inbox = () => {
   }, []);
 
   /* ------------------------------------------------------------------
-   * FETCH STATS (unchanged API logic, UI hidden)
-   * ------------------------------------------------------------------ */
-  const fetchStats = useCallback(async () => {
-    try {
-      setStatsError(false);
-
-      const unseenRes = await fetchWithAuth("/v1/imap/emails?limit=1");
-      if (unseenRes.ok) {
-        const unseenResult = await unseenRes.json();
-        if (unseenResult.success) {
-          setStats((prev) => ({ ...prev, unseen: unseenResult.total || 0 }));
-        }
-      }
-
-      const prioRes = await fetchWithAuth("/v1/imap/priority-stats");
-      if (prioRes.ok) {
-        const prioResult = await prioRes.json();
-        if (prioResult.success) {
-          setStats((prev) => ({
-            ...prev,
-            pending: prioResult.data?.pendingAnalysis || 0,
-          }));
-        }
-      }
-    } catch (err) {
-      console.warn("IMAP stats failed:", err.message);
-      setStatsError(true);
-      setStats({ unseen: 0, pending: 0 });
-    }
-  }, [fetchWithAuth]);
-
-  /* ------------------------------------------------------------------
    * REFRESH IMAP (unchanged API logic)
    * ------------------------------------------------------------------ */
   const handleRefresh = useCallback(async () => {
@@ -182,49 +196,206 @@ const Inbox = () => {
   /* ------------------------------------------------------------------
    * PLACEHOLDER ACTIONS (no API yet)
    * ------------------------------------------------------------------ */
-  const handleMove = useCallback(async (emailId, newFolder) => {
-    toast.info("Move functionality coming soon");
+  const updateEmailInState = useCallback((updatedEmail) => {
+    setEmails((prev) =>
+      prev.map((email) => (email._id === updatedEmail._id ? updatedEmail : email))
+    );
+    setSelectedEmail((prev) => (prev?._id === updatedEmail._id ? updatedEmail : prev));
   }, []);
 
-  const handleMarkRead = useCallback(async (emailId) => {
-    toast.info("Mark read functionality coming soon");
-  }, []);
+  const handleMove = useCallback(async (emailId, newFolder) => {
+    try {
+      const res = await fetchWithAuth(`/v1/imap/emails/${emailId}/move`, {
+        method: "POST",
+        body: JSON.stringify({ folder: newFolder }),
+      });
+      const result = await res.json();
+
+      if (!res.ok || !result.success) {
+        throw new Error(result.message || "Move failed");
+      }
+
+      toast.success(`Email moved to ${FOLDER_LABELS[newFolder] || newFolder}`);
+      setSelectedEmails((prev) => prev.filter((id) => id !== emailId));
+      fetchEmails();
+    } catch (error) {
+      toast.error(error.message || "Failed to move email");
+    }
+  }, [fetchEmails, fetchWithAuth]);
+
+  const handleMarkRead = useCallback(async (emailId, nextReadState) => {
+    try {
+      const res = await fetchWithAuth(`/v1/imap/emails/${emailId}/read`, {
+        method: "PATCH",
+        body: JSON.stringify({ isRead: nextReadState }),
+      });
+      const result = await res.json();
+
+      if (!res.ok || !result.success) {
+        throw new Error(result.message || "Update failed");
+      }
+
+      updateEmailInState(result.email);
+    } catch (error) {
+      toast.error(error.message || "Failed to update read state");
+    }
+  }, [fetchWithAuth, updateEmailInState]);
 
   const handleBulkMove = useCallback(
     async (newFolder) => {
       if (!selectedEmails.length) return;
-      toast.info("Bulk move functionality coming soon");
+      try {
+        const res = await fetchWithAuth("/v1/imap/emails/move", {
+          method: "POST",
+          body: JSON.stringify({ emailIds: selectedEmails, folder: newFolder }),
+        });
+        const result = await res.json();
+        if (!res.ok || !result.success) {
+          throw new Error(result.message || "Bulk move failed");
+        }
+
+        toast.success(`Moved ${selectedEmails.length} emails`);
+        setSelectedEmails([]);
+        fetchEmails();
+      } catch (error) {
+        toast.error(error.message || "Failed to move selected emails");
+      }
     },
-    [selectedEmails]
+    [fetchEmails, fetchWithAuth, selectedEmails]
   );
 
+  const handleBulkRead = useCallback(async (nextReadState) => {
+    if (!selectedEmails.length) return;
+
+    try {
+      const res = await fetchWithAuth("/v1/imap/emails/read", {
+        method: "PATCH",
+        body: JSON.stringify({ emailIds: selectedEmails, isRead: nextReadState }),
+      });
+      const result = await res.json();
+      if (!res.ok || !result.success) {
+        throw new Error(result.message || "Bulk update failed");
+      }
+
+      setEmails((prev) =>
+        prev.map((email) =>
+          selectedEmails.includes(email._id) ? { ...email, isRead: nextReadState } : email
+        )
+      );
+      setSelectedEmail((prev) =>
+        prev && selectedEmails.includes(prev._id) ? { ...prev, isRead: nextReadState } : prev
+      );
+      toast.success(
+        nextReadState
+          ? `Marked ${selectedEmails.length} emails as read`
+          : `Marked ${selectedEmails.length} emails as unread`
+      );
+      setSelectedEmails([]);
+    } catch (error) {
+      toast.error(error.message || "Failed to update selected emails");
+    }
+  }, [fetchWithAuth, selectedEmails]);
+
   const handleReply = useCallback(async (emailId) => {
-    toast.info("Reply functionality coming soon");
+    const email = emails.find((item) => item._id === emailId) || selectedEmail;
+    if (!email) return;
+
+    const recipient = extractEmailAddress(email.from);
+    const normalizedSubject = String(email.subject || "").trim();
+
+    setComposeMode("reply");
+    setComposeForm({
+      to: recipient,
+      subject: normalizedSubject.toLowerCase().startsWith("re:")
+        ? normalizedSubject
+        : `Re: ${normalizedSubject || "(no subject)"}`,
+      body: `\n\nOn ${email.date ? new Date(email.date).toLocaleString() : "an earlier message"}, ${email.from || recipient} wrote:\n${String(email.body || "").replace(/<[^>]+>/g, "")}`,
+    });
+    setComposeOpen(true);
+  }, [emails, selectedEmail]);
+
+  const openCompose = useCallback(() => {
+    setComposeMode("new");
+    setComposeForm({
+      to: "",
+      subject: "",
+      body: "",
+    });
+    setComposeOpen(true);
   }, []);
+
+  const handleComposeChange = useCallback((field, value) => {
+    setComposeForm((prev) => ({
+      ...prev,
+      [field]: value,
+    }));
+  }, []);
+
+  const handleComposeSend = useCallback(async () => {
+    if (!composeForm.to.trim() || !composeForm.subject.trim() || !composeForm.body.trim()) {
+      toast.error("To, subject, and message are required");
+      return;
+    }
+
+    try {
+      setComposeSending(true);
+      const response = await fetchWithAuth("/v1/smtp/send-email", {
+        method: "POST",
+        body: JSON.stringify({
+          to: composeForm.to.trim(),
+          subject: composeForm.subject.trim(),
+          text: composeForm.body,
+          html: composeForm.body
+            .split("\n")
+            .map((line) => `<p>${line || "&nbsp;"}</p>`)
+            .join(""),
+        }),
+      });
+      const result = await response.json();
+
+      if (!response.ok || !result.success) {
+        throw new Error(result.message || "Failed to send email");
+      }
+
+      toast.success(composeMode === "reply" ? "Reply sent" : "Email sent");
+      setComposeOpen(false);
+      setComposeForm({ to: "", subject: "", body: "" });
+
+      if (folder === "sent") {
+        fetchEmails("sent", 1, searchTerm, unreadOnly);
+      }
+    } catch (error) {
+      toast.error(error.message || "Failed to send email");
+    } finally {
+      setComposeSending(false);
+    }
+  }, [composeForm, composeMode, fetchEmails, fetchWithAuth, folder, searchTerm, unreadOnly]);
 
   /* ------------------------------------------------------------------
    * EFFECTS
    * ------------------------------------------------------------------ */
   useEffect(() => {
-    console.log("🔍 Inbox Component Mounted:");
-    console.log("  - User:", user);
-    console.log("  - IMAP Enabled:", imap_enabled);
-
     fetchEmails();
-    fetchStats();
-    const interval = setInterval(fetchStats, 30000);
-    return () => clearInterval(interval);
-  }, [fetchEmails, fetchStats, user, imap_enabled]);
+  }, [fetchEmails, imap_enabled]);
+
+  useEffect(() => {
+    const nextFolder = searchParams.get("folder") || "inbox";
+    if (nextFolder !== folder) {
+      setFolder(nextFolder);
+      setPage(1);
+    }
+  }, [searchParams, folder]);
 
   useEffect(() => {
     setSearchParams(
       {
+        folder,
         page: page.toString(),
         ...(searchTerm && { q: searchTerm }),
       },
       { replace: true }
     );
-  }, [page, searchTerm, setSearchParams]);
+  }, [folder, page, searchTerm, setSearchParams]);
 
   // When emails change, ensure something is selected (Gmail-style)
   useEffect(() => {
@@ -240,6 +411,41 @@ const Inbox = () => {
       setSelectedEmail(null);
     }
   }, [emails, selectedEmail]);
+
+  useEffect(() => {
+    if (!selectedEmail) {
+      setAssignedAgent("Unassigned");
+      setTicketStatus("Open");
+      setPriorityValue("Medium");
+      setInternalNotes("");
+      setMoreActionsOpen(false);
+      return;
+    }
+
+    const subject = String(selectedEmail.subject || "").toLowerCase();
+    const incomingPriority = String(selectedEmail.priority || "").toLowerCase();
+
+    setAssignedAgent(selectedEmail.assignedAgent || "Unassigned");
+
+    if (selectedEmail.folder === "resolved" || selectedEmail.folder === "processed") {
+      setTicketStatus("Closed");
+    } else if (!selectedEmail.isRead) {
+      setTicketStatus("Open");
+    } else {
+      setTicketStatus("Pending");
+    }
+
+    if (incomingPriority === "high" || subject.includes("urgent") || subject.includes("asap")) {
+      setPriorityValue("High");
+    } else if (incomingPriority === "low") {
+      setPriorityValue("Low");
+    } else {
+      setPriorityValue("Medium");
+    }
+
+    setInternalNotes(selectedEmail.internalNotes || "");
+    setMoreActionsOpen(false);
+  }, [selectedEmail]);
 
   const pages = Math.ceil(total / limit);
   const startItem = total === 0 ? 0 : (page - 1) * limit + 1;
@@ -267,125 +473,290 @@ const Inbox = () => {
     return "bg-slate-100 text-slate-700 border-slate-200";
   };
 
+  const statusTone = (status) => {
+    const value = String(status || "").toLowerCase();
+    if (value === "open" || value === "urgent" || value === "high") {
+      return "bg-red-50 text-red-700 border-red-200";
+    }
+    if (value === "pending" || value === "medium") {
+      return "bg-amber-50 text-amber-700 border-amber-200";
+    }
+    if (value === "closed" || value === "resolved" || value === "processed" || value === "low") {
+      return "bg-emerald-50 text-emerald-700 border-emerald-200";
+    }
+    return "bg-slate-100 text-slate-700 border-slate-200";
+  };
+
+  const deriveMessageStatus = useCallback(
+    (email) => {
+      const subject = String(email?.subject || "").toLowerCase();
+      if (String(email?.priority || "").toLowerCase() === "high" || subject.includes("urgent") || subject.includes("asap")) {
+        return "Urgent";
+      }
+      if (email?.folder === "resolved" || email?.folder === "processed") {
+        return "Resolved";
+      }
+      if (email?.isRead) {
+        return "Pending";
+      }
+      return "Pending";
+    },
+    []
+  );
+
+  const selectedCountLabel =
+    selectedEmails.length > 0
+      ? `${selectedEmails.length} selected`
+      : `${startItem}-${endItem} of ${total}`;
+
+  const renderPriorityBadge = (priority) => {
+    if (!priority || String(priority).toLowerCase() === "pending") return null;
+
+    return (
+      <span
+        className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-semibold border ${priorityColor(
+          priority
+        )}`}
+      >
+        {String(priority).toUpperCase()}
+      </span>
+    );
+  };
+
+  const currentListLabel = useMemo(() => {
+    return FOLDER_LABELS[folder] || "Inbox";
+  }, [folder]);
+
+  const changeFolder = useCallback(
+    (nextFolder) => {
+      setSelectedEmails([]);
+      setSelectedEmail(null);
+      setFolder(nextFolder);
+      setPage(1);
+      setSearchParams(
+        {
+          folder: nextFolder,
+          page: "1",
+          ...(searchTerm && { q: searchTerm }),
+        },
+        { replace: true }
+      );
+    },
+    [searchTerm, setSearchParams]
+  );
+
+  const openTicketFromEmail = useCallback(
+    (email) => {
+      const resolvedTicketId =
+        email?.ticketId ||
+        email?.metadata?.ticketId ||
+        extractTicketIdFromSubject(email?.subject);
+
+      if (!resolvedTicketId) {
+        toast.info("No linked ticket was found for this message yet.");
+        return;
+      }
+
+      if (!email.isRead) {
+        handleMarkRead(email._id, true);
+      }
+
+      navigate(`/portal/tickets/${resolvedTicketId}`);
+    },
+    [handleMarkRead, navigate]
+  );
+
+  if (sessionLoading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600" />
+        <p className="ml-2">Loading session...</p>
+      </div>
+    );
+  }
+
+  if (!imap_enabled) {
+    return <Navigate to="/portal" replace />;
+  }
+
   // ------------------------------------------------------------------
   // RENDER
   // ------------------------------------------------------------------
   return (
-    <div className="flex flex-col h-full min-h-[70vh]">
-      {/* Top controls (Gmail/Freshdesk style) */}
-      <div className="flex items-center justify-between mb-3">
-        <div className="flex items-center gap-3">
-          <Mail className="h-5 w-5 text-emerald-600" />
-          <div className="flex flex-col">
-            <span className="text-sm font-semibold text-slate-800">
-              Inbox
-            </span>
-            <span className="text-xs text-slate-500">
-              {startItem}-{endItem} of {total}
-            </span>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2">
-          {/* Refresh */}
-          <button
-            onClick={handleRefresh}
-            disabled={loading}
-            className="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-medium border border-slate-200 bg-white hover:bg-slate-50 disabled:opacity-50"
-          >
-            <RefreshCw
-              className={`h-4 w-4 mr-1.5 ${
-                loading ? "animate-spin text-emerald-600" : "text-slate-500"
-              }`}
-            />
-            Refresh
-          </button>
-
-          {/* Search */}
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-            <input
-              placeholder="Search mail"
-              defaultValue={searchTerm}
-              onChange={(e) => debouncedSearch(e.target.value)}
-              className="pl-9 pr-3 py-1.5 text-sm rounded-full border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500/60 focus:border-emerald-400 w-56"
-            />
+    <div className="flex h-[calc(100vh-12rem)] min-h-[680px] flex-col">
+      <div className="border-b border-slate-200 bg-white px-4 py-4">
+        <div className="flex flex-col gap-4">
+          <div className="flex items-center justify-between gap-4">
+            <h1 className="text-2xl font-semibold text-slate-950">Inbox</h1>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={openCompose}
+                className="inline-flex items-center rounded-md bg-slate-900 px-3 py-2 text-sm font-medium text-white hover:bg-slate-800"
+              >
+                <Send className="mr-2 h-4 w-4" />
+                Compose
+              </button>
+              <button
+                onClick={handleRefresh}
+                disabled={loading}
+                className="inline-flex items-center rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-50 disabled:opacity-50"
+              >
+                <RefreshCw className={`mr-2 h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+                Refresh
+              </button>
+            </div>
           </div>
 
-          {/* Unread filter */}
-          <button
-            onClick={() => setUnreadOnly(!unreadOnly)}
-            className={`inline-flex items-center px-3 py-1.5 rounded-full text-xs font-medium border ${
-              unreadOnly
-                ? "border-emerald-500 bg-emerald-50 text-emerald-700"
-                : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
-            }`}
-          >
-            <Filter className="h-3.5 w-3.5 mr-1" />
-            Unread only
-          </button>
-
-          {/* Bulk actions */}
-          {selectedEmails.length > 0 && (
-            <button
-              onClick={() => handleBulkMove("processed")}
-              className="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-medium border border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"
-            >
-              Move {selectedEmails.length}
-            </button>
-          )}
+          <div className="flex flex-wrap items-center gap-2">
+            {HEADER_FILTERS.map((item) => {
+              const active = folder === item.folder;
+              return (
+                <button
+                  key={item.folder}
+                  type="button"
+                  onClick={() => changeFolder(item.folder)}
+                  className={classNames(
+                    "inline-flex items-center rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+                    active
+                      ? "bg-slate-900 text-white"
+                      : "text-slate-600 hover:bg-slate-100"
+                  )}
+                >
+                  {item.title}
+                </button>
+              );
+            })}
+          </div>
         </div>
       </div>
 
-      {/* Main layout: list (left) + preview (right) */}
-      <div className="flex-1 min-h-0 mt-1">
-        <div className="flex h-full min-h-[480px] rounded-lg border border-slate-200 bg-white shadow-sm overflow-hidden">
-          {/* LEFT: Email list */}
-          <div className="w-full md:w-2/5 border-r border-slate-200 flex flex-col">
-            {/* List header row (checkbox + pagination) */}
-            <div className="flex items-center justify-between px-3 py-2 border-b border-slate-100 bg-slate-50/70">
-              <div className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  onChange={handleSelectAll}
-                  className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 h-4 w-4"
-                />
-                <span className="text-xs text-slate-500">
-                  {selectedEmails.length > 0
-                    ? `${selectedEmails.length} selected`
-                    : "All conversations"}
-                </span>
+      <Dialog open={composeOpen} onOpenChange={setComposeOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>{composeMode === "reply" ? "Reply" : "Compose mail"}</DialogTitle>
+            <DialogDescription>
+              Send mail directly from the portal mailbox.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-700">To</label>
+              <input
+                type="email"
+                value={composeForm.to}
+                onChange={(event) => handleComposeChange("to", event.target.value)}
+                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                placeholder="recipient@example.com"
+              />
+            </div>
+
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-700">Subject</label>
+              <input
+                type="text"
+                value={composeForm.subject}
+                onChange={(event) => handleComposeChange("subject", event.target.value)}
+                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                placeholder="Subject"
+              />
+            </div>
+
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-700">Message</label>
+              <Textarea
+                value={composeForm.body}
+                onChange={(event) => handleComposeChange("body", event.target.value)}
+                className="min-h-[240px]"
+                placeholder="Write your email..."
+              />
+            </div>
+          </div>
+
+          <DialogFooter>
+            <button
+              type="button"
+              onClick={() => setComposeOpen(false)}
+              className="inline-flex items-center rounded-md border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleComposeSend}
+              disabled={composeSending}
+              className="inline-flex items-center rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-60"
+            >
+              <Send className="mr-2 h-4 w-4" />
+              {composeSending ? "Sending..." : "Send"}
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <div className="min-h-0 flex-1 bg-slate-50">
+        <div className="grid h-full min-h-0 grid-cols-1 gap-6 xl:grid-cols-[380px_minmax(0,1fr)]">
+          <section className="flex min-h-0 flex-col bg-white">
+            <div className="border-b border-slate-200 px-4 py-4">
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-sm font-semibold text-slate-900">
+                  {selectedCountLabel}
+                </div>
+                <div className="flex items-center gap-1 text-slate-500">
+                  <button
+                    onClick={() => setPage((p) => Math.max(1, p - 1))}
+                    disabled={page === 1}
+                    className="rounded p-1 hover:bg-slate-100 disabled:opacity-40"
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                  </button>
+                  <span className="px-1 text-xs">
+                    {page} / {Math.max(pages, 1)}
+                  </span>
+                  <button
+                    onClick={() => setPage((p) => Math.min(pages, p + 1))}
+                    disabled={page === pages || pages === 0}
+                    className="rounded p-1 hover:bg-slate-100 disabled:opacity-40"
+                  >
+                    <ChevronRight className="h-4 w-4" />
+                  </button>
+                </div>
               </div>
-              <div className="flex items-center gap-1 text-slate-500">
+
+              <div className="mt-4 flex items-center gap-2">
+                <div className="relative flex-1">
+                  <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                  <input
+                    placeholder="Search sender or subject"
+                    defaultValue={searchTerm}
+                    onChange={(e) => debouncedSearch(e.target.value)}
+                    className="w-full rounded-md border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                  />
+                </div>
                 <button
-                  onClick={() => setPage((p) => Math.max(1, p - 1))}
-                  disabled={page === 1}
-                  className="p-1 rounded hover:bg-slate-100 disabled:opacity-40"
+                  onClick={() => setUnreadOnly(!unreadOnly)}
+                  className={classNames(
+                    "inline-flex items-center rounded-md border px-3 py-2 text-xs font-medium transition-colors",
+                    unreadOnly
+                      ? "border-emerald-500 bg-emerald-50 text-emerald-700"
+                      : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                  )}
                 >
-                  <ChevronLeft className="h-4 w-4" />
-                </button>
-                <span className="text-[11px] px-1">
-                  {page} / {Math.max(pages, 1)}
-                </span>
-                <button
-                  onClick={() => setPage((p) => Math.min(pages, p + 1))}
-                  disabled={page === pages || pages === 0}
-                  className="p-1 rounded hover:bg-slate-100 disabled:opacity-40"
-                >
-                  <ChevronRight className="h-4 w-4" />
+                  <Filter className="mr-1.5 h-3.5 w-3.5" />
+                  Unread
                 </button>
               </div>
             </div>
 
-            {/* Email list body */}
-            <div className="flex-1 overflow-y-auto">
+            <div className="min-h-0 flex-1 overflow-y-auto">
               {loading ? (
-                <div className="flex flex-col items-center justify-center h-full py-10 text-slate-500">
+                <div className="flex h-full flex-col items-center justify-center py-10 text-slate-500">
                   <div className="animate-spin rounded-full h-7 w-7 border-b-2 border-emerald-500" />
                   <p className="mt-2 text-xs">Loading emails…</p>
                 </div>
               ) : emails.length === 0 ? (
-                <div className="flex flex-col items-center justify-center h-full py-10 text-slate-500">
+                <div className="flex h-full flex-col items-center justify-center py-10 text-slate-500">
                   <Mail className="h-10 w-10 mb-3 text-slate-300" />
                   <p className="text-xs mb-1">No emails found.</p>
                   <button
@@ -398,80 +769,45 @@ const Inbox = () => {
               ) : (
                 <ul className="divide-y divide-slate-100">
                   {emails.map((email) => {
-                    const isActive =
-                      selectedEmail && selectedEmail._id === email._id;
+                    const isActive = selectedEmail?._id === email._id;
 
                     return (
                       <li
                         key={email._id}
-                        onClick={() => setSelectedEmail(email)}
-                        className={`cursor-pointer px-3 py-2.5 text-sm transition-colors ${
-                          isActive
-                            ? "bg-emerald-50/80"
-                            : "hover:bg-slate-50"
-                        }`}
+                        onClick={() => {
+                          setSelectedEmail(email);
+                          if (!email.isRead) {
+                            handleMarkRead(email._id, true);
+                          }
+                        }}
+                        className={classNames(
+                          "cursor-pointer px-4 py-4 text-sm transition-colors",
+                          isActive ? "bg-slate-50" : "hover:bg-slate-50"
+                        )}
                       >
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2">
-                              <span
-                                className={`text-xs font-medium ${
-                                  email.isRead
-                                    ? "text-slate-500"
-                                    : "text-slate-900"
-                                }`}
+                        <div className="min-w-0">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <div
+                                className={classNames(
+                                  "truncate text-sm",
+                                  email.isRead ? "font-medium text-slate-700" : "font-semibold text-slate-950"
+                                )}
                               >
                                 {email.from || "Unknown sender"}
-                              </span>
-
-                              {/* Read/Unread pill */}
-                              <span
-                                className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-semibold border ${
-                                  email.isRead
-                                    ? "bg-emerald-50 text-emerald-700 border-emerald-100"
-                                    : "bg-amber-50 text-amber-700 border-amber-100"
-                                }`}
+                              </div>
+                              <div
+                                className={classNames(
+                                  "mt-1 truncate text-sm",
+                                  email.isRead ? "text-slate-600" : "font-medium text-slate-900"
+                                )}
                               >
-                                {email.isRead ? "READ" : "UNREAD"}
-                              </span>
-
-                              {/* Priority pill */}
-                              <span
-                                className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-semibold border ${priorityColor(
-                                  email.priority
-                                )}`}
-                              >
-                                {email.priority
-                                  ? email.priority.toUpperCase()
-                                  : "PENDING"}
-                              </span>
-                            </div>
-
-                            <div className="mt-0.5 flex items-center gap-1 text-xs text-slate-600">
-                              <span className="truncate max-w-[230px] font-medium">
                                 {email.subject || "(no subject)"}
-                              </span>
+                              </div>
                             </div>
-
-                            <div className="mt-0.5 text-[11px] text-slate-400 truncate">
-                              {email.preview ||
-                                (email.body
-                                  ? email.body.replace(/<[^>]+>/g, "").slice(0, 80) +
-                                    "…"
-                                  : "")}
+                            <div className="shrink-0 text-xs text-slate-500">
+                              {email.date ? new Date(email.date).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : ""}
                             </div>
-                          </div>
-
-                          <div className="flex flex-col items-end gap-1">
-                            <span className="text-[11px] text-slate-400">
-                              {email.date
-                                ? new Date(email.date).toLocaleDateString()
-                                : ""}
-                            </span>
-                            {email.attachments &&
-                              email.attachments.length > 0 && (
-                                <Paperclip className="h-3.5 w-3.5 text-slate-400" />
-                              )}
                           </div>
                         </div>
                       </li>
@@ -480,148 +816,173 @@ const Inbox = () => {
                 </ul>
               )}
             </div>
-          </div>
+          </section>
 
-          {/* RIGHT: Email preview (desktop only) */}
-          <div className="hidden md:flex md:w-3/5 flex-col bg-slate-50">
+          <section className="hidden min-h-0 flex-col bg-white xl:flex">
             {!selectedEmail ? (
-              <div className="flex flex-1 items-center justify-center text-slate-400 text-sm">
-                Select an email to preview
+              <div className="flex flex-1 items-center justify-center text-sm text-slate-400">
+                Select an email to view it.
               </div>
             ) : (
               <>
-                {/* Header */}
-                <div className="px-5 py-3 border-b border-slate-200 bg-white/90 backdrop-blur">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex-1 min-w-0">
-                      <h2 className="text-sm font-semibold text-slate-900 truncate">
+                <div className="border-b border-slate-200 px-5 py-4">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="min-w-0 flex-1">
+                      <div className="text-lg font-semibold text-slate-950">
                         {selectedEmail.subject || "(no subject)"}
-                      </h2>
-                      <div className="mt-1 flex flex-wrap items-center gap-2">
-                        <span className="text-xs text-slate-500">
-                          From:{" "}
-                          <span className="font-medium text-slate-700">
-                            {selectedEmail.from || "Unknown sender"}
-                          </span>
+                      </div>
+                      <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-slate-500">
+                        <span className="font-medium text-slate-800">
+                          {selectedEmail.from || "Unknown sender"}
                         </span>
-                        <span className="text-xs text-slate-400">
-                          •{" "}
+                        <span>{extractEmailAddress(selectedEmail.from)}</span>
+                        <span>•</span>
+                        <span>
                           {selectedEmail.date
-                            ? new Date(
-                                selectedEmail.date
-                              ).toLocaleString()
+                            ? new Date(selectedEmail.date).toLocaleString()
                             : ""}
                         </span>
                       </div>
-
-                      <div className="mt-2 flex flex-wrap gap-1.5">
-                        {/* Read/Unread chip */}
-                        <span
-                          className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold border ${
-                            selectedEmail.isRead
-                              ? "bg-emerald-50 text-emerald-700 border-emerald-100"
-                              : "bg-amber-50 text-amber-700 border-amber-100"
-                          }`}
-                        >
-                          {selectedEmail.isRead ? "READ" : "UNREAD"}
-                        </span>
-
-                        {/* Priority chip */}
-                        <span
-                          className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold border ${priorityColor(
-                            selectedEmail.priority
-                          )}`}
-                        >
-                          Priority:{" "}
-                          {selectedEmail.priority
-                            ? selectedEmail.priority.toUpperCase()
-                            : "PENDING"}
-                        </span>
-                      </div>
                     </div>
 
-                    {/* Actions */}
-                    <div className="flex flex-col items-end gap-1">
+                    <div className="flex flex-wrap items-center gap-2">
                       <button
                         onClick={() => handleReply(selectedEmail._id)}
-                        className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-medium border border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"
+                        className="inline-flex items-center rounded-md bg-slate-900 px-3 py-2 text-sm font-medium text-white hover:bg-slate-800"
                       >
-                        <Reply className="h-3.5 w-3.5 mr-1" />
+                        <Reply className="mr-2 h-4 w-4" />
                         Reply
                       </button>
                       <button
-                        onClick={() => handleMarkRead(selectedEmail._id)}
-                        className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-medium border border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"
+                        onClick={() => handleMarkRead(selectedEmail._id, !selectedEmail.isRead)}
+                        className="inline-flex items-center rounded-md border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
                       >
-                        {selectedEmail.isRead ? (
-                          <>
-                            <Clock className="h-3.5 w-3.5 mr-1" />
-                            Mark unread
-                          </>
-                        ) : (
-                          <>
-                            <AlertCircle className="h-3.5 w-3.5 mr-1" />
-                            Mark read
-                          </>
-                        )}
+                        {selectedEmail.isRead ? "Mark Unread" : "Mark Read"}
+                      </button>
+                      <button
+                        onClick={() => setMoreActionsOpen((current) => !current)}
+                        className="inline-flex items-center rounded-md border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                      >
+                        <MoreHorizontal className="mr-2 h-4 w-4" />
+                        More
                       </button>
                     </div>
                   </div>
                 </div>
 
-                {/* Body */}
-                <div className="flex-1 overflow-y-auto p-5 bg-slate-50">
-                  <div className="bg-white rounded-lg border border-slate-200 p-4 shadow-sm">
-                    <div className="prose prose-sm max-w-none text-slate-800">
-                      <div
-                        className="whitespace-pre-wrap break-words"
-                        dangerouslySetInnerHTML={{
-                          __html:
-                            selectedEmail.body || "<p>No content</p>",
+                <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
+                  {moreActionsOpen ? (
+                    <div className="mb-4 flex flex-wrap gap-2 rounded-md bg-slate-50 p-3">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          handleMove(selectedEmail._id, "processed");
+                          setMoreActionsOpen(false);
                         }}
-                      />
+                        className="inline-flex items-center rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                      >
+                        Move to Processed
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          openTicketFromEmail(selectedEmail);
+                          setMoreActionsOpen(false);
+                        }}
+                        className="inline-flex items-center rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                      >
+                        Open Ticket
+                      </button>
                     </div>
+                  ) : null}
 
-                    {/* Attachments */}
-                    {selectedEmail.attachments &&
-                      selectedEmail.attachments.length > 0 && (
-                        <div className="mt-5 border-t border-slate-100 pt-3">
-                          <h3 className="text-xs font-semibold text-slate-500 mb-2">
-                            Attachments
-                          </h3>
-                          <ul className="space-y-1.5">
-                            {selectedEmail.attachments.map((att, i) => (
-                              <li
-                                key={i}
-                                className="flex items-center justify-between text-xs text-slate-600 bg-slate-50 rounded-md px-2 py-1.5"
-                              >
-                                <div className="flex items-center gap-2">
-                                  <Paperclip className="h-3.5 w-3.5 text-slate-400" />
-                                  <span className="truncate max-w-[180px]">
-                                    {att.filename}
-                                  </span>
-                                  <span className="text-[10px] text-slate-400">
-                                    {att.size} bytes
-                                  </span>
-                                </div>
-                                <a
-                                  href={`/api/attachments/${selectedEmail._id}/${att.filename}`}
-                                  download
-                                  className="inline-flex items-center text-[11px] text-emerald-600 hover:text-emerald-700"
-                                >
-                                  <Download className="h-3.5 w-3.5 mr-0.5" />
-                                  Download
-                                </a>
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
-                      )}
+                  <div className="prose prose-sm max-w-none text-slate-800">
+                    <div
+                      className="whitespace-pre-wrap break-words"
+                      dangerouslySetInnerHTML={{
+                        __html: selectedEmail.body || "<p>No content</p>",
+                      }}
+                    />
                   </div>
+
+                  {selectedEmail.attachments && selectedEmail.attachments.length > 0 ? (
+                    <div className="mt-8">
+                      <div className="mb-3 text-sm font-semibold text-slate-900">Attachments</div>
+                      <div className="space-y-2">
+                        {selectedEmail.attachments.map((att, index) => (
+                          <div
+                            key={`${att.filename}-${index}`}
+                            className="flex items-center justify-between rounded-md bg-slate-50 px-3 py-2"
+                          >
+                            <div className="flex items-center gap-2 text-sm text-slate-700">
+                              <Paperclip className="h-4 w-4 text-slate-400" />
+                              <span>{att.filename}</span>
+                              <span className="text-xs text-slate-400">{att.size} bytes</span>
+                            </div>
+                            <a
+                              href={att.url || "#"}
+                              download={Boolean(att.url)}
+                              onClick={(event) => {
+                                if (!att.url) {
+                                  event.preventDefault();
+                                  toast.info("Attachment download is not available yet for this message");
+                                }
+                              }}
+                              className="inline-flex items-center text-sm font-medium text-emerald-600 hover:text-emerald-700"
+                            >
+                              <Download className="mr-1 h-4 w-4" />
+                              {att.url ? "Download" : "Unavailable"}
+                            </a>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  <details className="mt-8 rounded-lg border border-slate-200 bg-slate-50 p-4">
+                    <summary className="cursor-pointer text-sm font-medium text-slate-700">
+                      Conversation details
+                    </summary>
+                    <div className="mt-4 space-y-4">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span
+                          className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold ${statusTone(ticketStatus)}`}
+                        >
+                          {ticketStatus}
+                        </span>
+                        <span
+                          className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-semibold ${priorityColor(priorityValue)}`}
+                        >
+                          <Flag className="mr-1 h-3.5 w-3.5" />
+                          {priorityValue}
+                        </span>
+                        <span className="inline-flex items-center rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-slate-700">
+                          {assignedAgent}
+                        </span>
+                      </div>
+
+                      <div>
+                        <div className="mb-2 text-sm font-semibold text-slate-900">Internal Notes</div>
+                        <textarea
+                          value={internalNotes}
+                          onChange={(event) => setInternalNotes(event.target.value)}
+                          className="min-h-[140px] w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                          placeholder="Add internal context, follow-up notes, or handoff details."
+                        />
+                        <button
+                          type="button"
+                          onClick={() => toast.success("Internal note saved locally")}
+                          className="mt-3 inline-flex items-center rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                        >
+                          Save Note
+                        </button>
+                      </div>
+                    </div>
+                  </details>
                 </div>
               </>
             )}
-          </div>
+          </section>
         </div>
       </div>
     </div>

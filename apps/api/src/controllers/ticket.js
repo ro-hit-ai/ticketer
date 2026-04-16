@@ -1,165 +1,139 @@
-// apps/api/src/controllers/ticket.controller.js
-require("dotenv").config();
-const express = require("express");
-const axios = require("axios");
-const { track } = require("../lib/hog");
-
-const {
-  sendAssignedEmail,
-  sendComment,
-  sendTicketCreate,
-  sendTicketStatus,
-} = require("../lib/nodemailer/ticket/email");
-
-const {
-  assignedNotification,
-  commentNotification,
-  priorityNotification,
-  activeStatusNotification,
-  statusUpdateNotification,
-} = require("../lib/services/notifications/notification");
-
-const { sendWebhookNotification } = require("../lib/services/notifications/webhook");
-const { checkSession } = require("../lib/session");
-
-// MODELS
-const Ticket = require("../models/Ticket");
-const Comment = require("../models/Comment");
-const Notification = require("../models/Notification");
-const TimeTracking = require("../models/TimeTracking");
-const Webhook = require("../models/Webhook");
-const User = require("../models/User");
-const Client = require("../models/Client");
-const Counter = require("../models/Counter");
-const { ImapService } = require("../lib/services/imap.service");
-const logger = require("../lib/logger");
+require('dotenv').config();
+const express = require('express');
+const axios = require('axios');
+const { checkToken } = require('../lib/jwt');
+const { track } = require('../lib/hog');
+const { sendAssignedEmail } = require('../lib/nodemailer/ticket/assigned');
+const { sendComment } = require('../lib/nodemailer/ticket/comment');
+// const { sendComment } = require('../lib/services/emailService');
+const { sendTicketCreate } = require('../lib/nodemailer/ticket/create');
+const { sendTicketStatus } = require('../lib/nodemailer/ticket/status');
+const { assignedNotification } = require('../lib/services/notifications/issue/assigned');
+const { commentNotification } = require('../lib/services/notifications/issue/comment');
+const { priorityNotification } = require('../lib/services/notifications/issue/priority');
+const { activeStatusNotification, statusUpdateNotification } = require('../lib/services/notifications/issue/status');
+const { sendWebhookNotification } = require('../lib/services/notifications/webhook');
+const { requirePermission } = require('../lib/roles');
+const { checkSession } = require('../lib/session'); 
+const Ticket = require('../models/Ticket');
+const Comment = require('../models/Comment');
+const Notification = require('../models/Notification');
+const TimeTracking = require('../models/TimeTracking');
+const EmailTemplate = require('../models/EmailTemplate');
+const Webhook = require('../models/Webhook');
+const User = require('../models/User');
+const Client = require('../models/Client');
 
 const router = express.Router();
 
-// SOCKET - Import properly
-const { getSocket, emitToTicket } = require("../socket");
-
-/* --------------------------------------------
-   HELPERS
---------------------------------------------- */
-
-const populateTicket = () => [
-  { path: "clientId", select: "id name number notes", strictPopulate: false },
-  { path: "assignedTo", select: "id name email avatar" },
-  { path: "team", select: "id name" },
-  { path: "createdBy", select: "id name email avatar" },
+const ticketPopulate = [
+  { path: 'clientId', select: 'id name number notes' },
+  { path: 'assignedTo', select: 'id name' },
+  { path: 'team', select: 'id name' }
 ];
 
-const validateEmail = (email) =>
-  String(email)
+const normalizeTicket = (ticketDoc) => {
+  const ticket = typeof ticketDoc?.toObject === 'function' ? ticketDoc.toObject() : ticketDoc;
+  if (!ticket) return ticket;
+
+  return {
+    ...ticket,
+    client: ticket.client || ticket.clientId || null,
+  };
+};
+
+const validateEmail = (email) => {
+  return String(email)
     .toLowerCase()
     .match(
-      /^(([^<>()[\]\\.,;:\s@"]+(\.[^<>()[\]\\.,;:\s@"]+)*)|(".+"))@((\[[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\])|(([a-zA-Z\-0-9]+\.)+[a-zA-Z]{2,}))$/
+      /^(([^<>()[\]\\.,;:\s@"]+(\.[^<>()[\]\\.,;:\s@"]+)*)|.(".+"))@((\[[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\])|(([a-zA-Z\-0-9]+\.)+[a-zA-Z]{2,}))$/
     );
-
-const generateTicketNumber = async () => {
-  const counter = await Counter.findByIdAndUpdate(
-    { _id: "ticket" },
-    { $inc: { seq: 1 } },
-    { new: true, upsert: true }
-  );
-  return `TKT-${String(counter.seq).padStart(6, "0")}`;
 };
 
-// Helper to emit socket events safely
-const emitComment = (ticketId, comment) => {
-  try {
-    // Use the imported emitToTicket function
-    emitToTicket(ticketId, "ticket:comment", comment);
-    logger.info(`Socket event emitted for ticket ${ticketId}, comment ${comment._id}`);
-  } catch (err) {
-    logger.error("Failed to emit socket event:", err);
-  }
-};
+// Create ticket
+router.post(
+  "/create",
+  requirePermission(["issue::create"]),
+  async (req, res) => {
+    try {
+      const {
+        name,
+        company,
+        detail,
+        title,
+        priority,
+        email,
+        engineer,
+        type,
+        createdBy,
+      } = req.body;
 
-/* --------------------------------------------
-   CREATE TICKET
---------------------------------------------- */
+      const user = await checkSession(req);
 
-const createTicket = async (req, res, isPublic = false) => {
-  try {
-    const { name, company, detail, title, priority, email, engineer, type, createdBy } =
-      req.body;
+      // const ticketData = {
+      //   name,
+      //   title,
+      //   detail: JSON.stringify(detail),
+      //   priority: priority ? priority : "low",
+      //   email,
+      //   type: type ? type.toLowerCase() : "support",
+      //   // createdBy: createdBy ? {
+      //   //   id: createdBy.id,
+      //   //   name: createdBy.name,
+      //   //   role: createdBy.role,
+      //   //   email: createdBy.email,
+      //   // } : undefined,
+      //   fromImap: false,
+      //   isComplete: false,
+      // };
 
-    logger.info("Creating new ticket:", { title, email, isPublic });
+      // if (company) {
+      //   ticketData.client = company.id || company;
+      // }
 
-    const user = isPublic ? null : await checkSession(req);
+      // if (engineer && engineer.name !== "Unassigned") {
+      //   ticketData.assignedTo = engineer.id;
+      // }
 
-    let creatorId = createdBy;
-    if (!creatorId && isPublic) {
-      let guest = await User.findOne({ email: "guest@system.local" });
-      if (!guest) {
-        guest = await User.create({
-          name: "Guest",
-          email: "guest@system.local",
-          password: "guest123",
-          role: "guest",
-        });
-      }
-      creatorId = guest._id;
-    } else if (!creatorId) {
-      creatorId = user?._id;
-    }
+const ticketData = {
+  name,
+  title,
+  detail: typeof detail === "object" ? JSON.stringify(detail) : detail,
+  priority: priority || "low",
+  email,
+  type: type ? type.toLowerCase() : "support",
+  createdBy: createdBy || user?._id, // session user or provided ID
+  fromImap: false,
+  isComplete: false,
+  number: req.body.number
+   };
 
-    const number = req.body.number || (await generateTicketNumber());
+if (company) {
+  ticketData.client = company.id || company;
+}
 
-    const ticketData = {
-      name,
-      title,
-      detail: typeof detail === "object" ? JSON.stringify(detail) : detail,
-      priority: priority || "low",
-      email,
-      type: type?.toLowerCase() || "support",
-      createdBy: creatorId,
-      fromImap: false,
-      isComplete: false,
-      number,
-      originalMessageId: null,
-    };
+if (engineer && engineer !== "Unassigned") {
+  ticketData.assignedTo = engineer.id || engineer;
+}
 
-    if (company) ticketData.clientId = company.id || company;
-    if (engineer && engineer !== "Unassigned")
-      ticketData.assignedTo = engineer.id || engineer;
 
-    const ticket = await Ticket.create(ticketData);
-    logger.info(`Ticket created: ${ticket.number} (${ticket._id})`);
+      const ticket = await Ticket.create(ticketData);
 
-    if (email && validateEmail(email)) {
-      try {
+      if (email && validateEmail(email)) {
         await sendTicketCreate(ticket);
-        logger.info(`Welcome email sent to ${email}`);
-      } catch (emailErr) {
-        logger.error("Failed to send welcome email:", emailErr);
       }
-    }
 
-    if (ticket.assignedTo) {
-      const assignedUser = await User.findById(ticket.assignedTo);
-      if (assignedUser) {
-        try {
+      if (engineer && engineer.name !== "Unassigned") {
+        const assignedUser = await User.findById(ticket.assignedTo);
+        if (assignedUser) {
           await sendAssignedEmail(assignedUser.email);
-          await assignedNotification(assignedUser, ticket, user || { _id: creatorId });
-          logger.info(`Assignment notification sent to ${assignedUser.email}`);
-        } catch (notifErr) {
-          logger.error("Failed to send assignment notification:", notifErr);
+          await assignedNotification(engineer, ticket, user);
         }
       }
-    }
 
-    // Webhooks
-    const webhooks = await Webhook.find({
-      type: "ticket_created",
-      active: true,
-    });
-
-    for (const webhook of webhooks) {
-      try {
-        await sendWebhookNotification(webhook, {
+      const webhooks = await Webhook.find({ type: "ticket_created", active: true });
+      for (const webhook of webhooks) {
+        const message = {
           event: "ticket_created",
           id: ticket._id,
           title: ticket.title,
@@ -169,522 +143,1063 @@ const createTicket = async (req, res, isPublic = false) => {
           type: ticket.type,
           createdBy: ticket.createdBy,
           assignedTo: ticket.assignedTo,
-          client: ticket.clientId,
-        });
-      } catch (webhookErr) {
-        logger.error("Webhook notification failed:", webhookErr);
-      }
-    }
-
-    // Create initial comment from ticket description
-    const initialComment = await Comment.create({
-      text: typeof detail === "object" ? JSON.stringify(detail) : detail,
-      ticketId: ticket._id,
-      userId: creatorId,
-      public: true,
-      reply: true, // Original ticket is considered a "reply" from customer
-      replyEmail: email,
-      fromAgent: false,
-      type: "user",
-    });
-
-    logger.info(`Initial comment created for ticket ${ticket.number}`);
-
-    // Emit socket event for new ticket
-    const io = getSocket();
-    if (io) {
-      io.emit("ticket:new", ticket);
-      logger.info(`Socket event emitted: ticket:new for ${ticket._id}`);
-    }
-
-    track().capture({ event: "ticket_created", distinctId: ticket._id.toString() });
-
-    res.send({ 
-      success: true, 
-      message: "Ticket created", 
-      id: ticket._id,
-      number: ticket.number 
-    });
-  } catch (error) {
-    logger.error("Ticket create error:", error);
-    return res.status(500).send({ success: false, message: error.message });
-  }
-};
-
-router.post("/create", (req, res) => createTicket(req, res, false));
-router.post("/public/create", (req, res) => createTicket(req, res, true));
-
-/* --------------------------------------------
-   LIST ROUTES — MUST BE ABOVE /:id
---------------------------------------------- */
-
-router.get("/tickets/open", (req, res) =>
-  fetchTickets({ isComplete: false }, req, res)
-);
-
-router.get("/tickets/completed", (req, res) =>
-  fetchTickets({ isComplete: true }, req, res)
-);
-
-router.get("/tickets/unassigned", (req, res) =>
-  fetchTickets({ isComplete: false, assignedTo: null }, req, res)
-);
-
-/* --------------------------------------------
-   USER SPECIFIC (Agent)
---------------------------------------------- */
-
-router.get("/tickets/user/open", async (req, res) => {
-  try {
-    const user = await checkSession(req);
-
-    const tickets = await Ticket.find({
-      isComplete: false,
-      assignedTo: user._id,
-      hidden: false,
-    })
-      .sort({ createdAt: -1 })
-      .populate(populateTicket());
-
-    res.send({ success: true, tickets });
-  } catch (error) {
-    logger.error("Error fetching user open tickets:", error);
-    res.status(500).send({ success: false, message: error.message });
-  }
-});
-
-router.get("/tickets/user/completed", async (req, res) => {
-  try {
-    const user = await checkSession(req);
-
-    const tickets = await Ticket.find({
-      isComplete: true,
-      assignedTo: user._id,
-      hidden: false,
-    })
-      .sort({ createdAt: -1 })
-      .populate(populateTicket());
-
-    res.send({ success: true, tickets });
-  } catch (error) {
-    logger.error("Error fetching user completed tickets:", error);
-    res.status(500).send({ success: false, message: error.message });
-  }
-});
-
-/* --------------------------------------------
-   SHARED FETCH FUNCTION
---------------------------------------------- */
-
-const fetchTickets = async (filter, req, res) => {
-  try {
-    await checkSession(req);
-
-    const tickets = await Ticket.find({ ...filter, hidden: false })
-      .sort({ createdAt: -1 })
-      .populate(populateTicket());
-
-    res.send({ success: true, tickets });
-  } catch (error) {
-    logger.error("Error fetching tickets:", error);
-    res.status(500).send({ success: false, message: error.message });
-  }
-};
-
-/* --------------------------------------------
-   TICKET DETAIL — MUST BE LAST
---------------------------------------------- */
-
-router.get("/:id([0-9a-fA-F]{24})", async (req, res) => {
-  try {
-    const ticket = await Ticket.findById(req.params.id).populate(populateTicket());
-
-    if (!ticket)
-      return res.status(404).send({ success: false, message: "Ticket not found" });
-
-    const [timeTracking, comments] = await Promise.all([
-      TimeTracking.find({ ticketId: ticket._id }).populate("userId", "name"),
-      Comment.find({ ticketId: ticket._id })
-        .populate("userId", "name avatar email role")  // Added role for better identification
-        .sort({ createdAt: 1 })
-        .lean(),
-    ]);
-
-    // Process comments to ensure consistent structure
-    const processedComments = comments.map(comment => {
-      // Ensure reply field is boolean
-      comment.reply = Boolean(comment.reply);
-      
-      // Ensure fromAgent field is boolean
-      comment.fromAgent = Boolean(comment.fromAgent);
-      
-      // If userId is populated and has email, use it for consistency
-      if (comment.userId && typeof comment.userId === 'object') {
-        comment.userId = {
-          _id: comment.userId._id,
-          name: comment.userId.name || comment.userId.email,
-          email: comment.userId.email,
-          avatar: comment.userId.avatar,
-          role: comment.userId.role
+          client: ticket.client,
         };
+        await sendWebhookNotification(webhook, message);
       }
-      
-      return comment;
-    });
 
-    logger.info(`Ticket detail fetched: ${ticket.number}, ${processedComments.length} comments`);
+      const hog = track();
+      hog.capture({
+        event: "ticket_created",
+        distinctId: ticket._id.toString(),
+      });
 
-    res.send({
-      success: true,
-      ticket: ticket.toObject(),
-      comments: processedComments,
-      timeTracking: timeTracking || [],
-    });
-  } catch (error) {
-    logger.error("Ticket detail error:", error);
-    res.status(500).send({ success: false, message: error.message });
+      res.status(200).send({
+        message: "Ticket created correctly",
+        success: true,
+        id: ticket._id,
+      });
+    } catch (error) {
+      console.error("Error creating ticket:", error);
+      res.status(500).send({
+        success: false,
+        message: "Internal server error",
+        error: error.message
+      });
+    }
   }
-});
+);
 
-/* --------------------------------------------
-   ADD COMMENT (AGENT REPLY)
---------------------------------------------- */
-
-router.put("/comment", async (req, res) => {
-  try {
-    const user = await checkSession(req);
-    if (!user) return res.status(401).json({ success: false, message: "Unauthorized" });
-
-    const { id: ticketId, text, public: isPublic = true } = req.body;
-    if (!ticketId || !text?.trim()) {
-      return res.status(400).json({ success: false, message: "Missing ticket ID or comment text" });
-    }
-
-    logger.info("Adding comment:", {
-      ticketId,
-      userId: user._id,
-      textLength: text.length,
-      isPublic
-    });
-
-    // Check if ticket exists
-    const ticket = await Ticket.findById(ticketId);
-    if (!ticket) {
-      return res.status(404).json({ success: false, message: "Ticket not found" });
-    }
-
-    // Create comment
-    const comment = await Comment.create({
-      text: text.trim(),
-      userId: user._id,
-      ticketId,
-      public: Boolean(isPublic),
-      reply: false, // Agent comments are NOT email replies
-      fromAgent: true, // Add this flag to identify agent comments
-      type: "user",
-    });
-
-    // Populate comment with user data
-    const populated = await Comment.findById(comment._id)
-      .populate("userId", "name avatar email role")
-      .lean();
-
-    // Ensure boolean fields
-    populated.reply = false;
-    populated.fromAgent = true;
-    
-    // Ensure user object has proper structure
-    if (populated.userId && typeof populated.userId === 'object') {
-      populated.userId = {
-        _id: populated.userId._id,
-        name: populated.userId.name || populated.userId.email,
-        email: populated.userId.email,
-        avatar: populated.userId.avatar,
-        role: populated.userId.role
-      };
-    }
-
-    logger.info(`Comment created: ${comment._id} for ticket ${ticketId}`);
-
-    // ────── SEND PUBLIC AGENT COMMENT TO CUSTOMER VIA EMAIL ──────
-    if (isPublic) {
-      try {
-        const emailSent = await ImapService.sendCommentAsEmail(
-          ticketId,
-          text.trim(),
-          user.name || user.email || "Support Team"
-        );
-        
-        if (emailSent) {
-          logger.info(`Comment emailed to ${ticket.email} for ticket ${ticket.number}`);
-        } else {
-          logger.warn(`Failed to email comment for ticket ${ticket.number}`);
-        }
-      } catch (emailErr) {
-        logger.error("Error sending comment email:", emailErr);
-        // Don't fail the request if email fails
-      }
-    }
-    // ─────────────────────────────────────────────────────────────
-
-    // Emit socket event for real-time update
-    emitComment(ticketId, populated);
-
-    // Also send notification
+// Public ticket creation
+router.post(
+  "/public/create",
+  async (req, res) => {
     try {
-      await commentNotification(ticket, user, text.trim());
-    } catch (notifErr) {
-      logger.error("Failed to send comment notification:", notifErr);
-    }
+      const {
+        name,
+        company,
+        detail,
+        title,
+        priority,
+        email,
+        engineer,
+        type,
+        createdBy,
+        number
+      } = req.body;
 
-    logger.info(`Comment successfully added and socket event emitted for ticket ${ticketId}`);
+       let creatorId = createdBy || null;
 
-    return res.json({ 
-      success: true, 
-      comment: populated,
-      message: "Comment added successfully" 
-    });
-  } catch (err) {
-    logger.error("Comment route error:", err);
-    return res.status(500).json({ 
-      success: false, 
-      message: err.message || "Failed to add comment" 
-    });
-  }
-});
-
-/* --------------------------------------------
-   STATUS UPDATE
---------------------------------------------- */
-
-router.put("/status/update", async (req, res) => {
-  try {
-    const { status, id } = req.body;
-    
-    if (!id) {
-      return res.status(400).json({ success: false, message: "Ticket ID required" });
-    }
-
-    logger.info("Updating ticket status:", { ticketId: id, status });
-
-    const ticket = await Ticket.findByIdAndUpdate(
-      id,
-      { isComplete: Boolean(status) },
-      { new: true }
-    ).populate(populateTicket());
-
-    if (!ticket) {
-      return res.status(404).json({ success: false, message: "Ticket not found" });
-    }
-
-    const io = getSocket();
-    if (io) {
-      io.emit("ticket:status", ticket);
-      io.to(`ticket:${id}`).emit("ticket:status", ticket);
-      logger.info(`Socket event emitted: ticket:status for ${id}`);
-    }
-
-    // Send status update notification
-    try {
-      await statusUpdateNotification(ticket);
-    } catch (notifErr) {
-      logger.error("Failed to send status notification:", notifErr);
-    }
-
-    res.send({ 
-      success: true, 
-      ticket,
-      message: `Ticket ${ticket.isComplete ? 'closed' : 'reopened'} successfully` 
-    });
-  } catch (err) {
-    logger.error("Status update error:", err);
-    res.status(500).send({ success: false, message: err.message });
-  }
-});
-
-/* --------------------------------------------
-   ASSIGN TICKET
---------------------------------------------- */
-
-router.patch("/assign/:id", async (req, res) => {
-  try {
-    const { assignedTo } = req.body;
-    const ticketId = req.params.id;
-
-    if (!ticketId) {
-      return res.status(400).json({ success: false, message: "Ticket ID required" });
-    }
-
-    logger.info("Assigning ticket:", { ticketId, assignedTo });
-
-    const ticket = await Ticket.findById(ticketId);
-    if (!ticket) {
-      return res.status(404).json({ success: false, message: "Ticket not found" });
-    }
-
-    const oldAssignee = ticket.assignedTo;
-    ticket.assignedTo = assignedTo || null;
-    await ticket.save();
-
-    const populated = await Ticket.findById(ticket._id).populate(
-      "assignedTo",
-      "name email avatar"
-    );
-
-    const io = getSocket();
-    if (io) {
-      // Notify new assignee
-      if (ticket.assignedTo) {
-        io.to(`user:${ticket.assignedTo}`).emit("ticket:assigned", populated);
+        // ✅ If no createdBy provided, create/find a Guest user
+    if (!creatorId) {
+      let guest = await User.findOne({ email: "guest@system.local" });
+      if (!guest) {
+        guest = await User.create({
+          name: "Guest",
+          email: "guest@system.local",
+          password: "guest123", // hashed automatically if you have middleware
+          role: "guest"
+        });
       }
-      
-      // Notify old assignee if changed
-      if (oldAssignee && oldAssignee.toString() !== assignedTo) {
-        io.to(`user:${oldAssignee}`).emit("ticket:unassigned", populated);
-      }
-      
-      // Broadcast general update
-      io.emit("ticket:update", populated);
-      io.to(`ticket:${ticketId}`).emit("ticket:update", populated);
-      
-      logger.info(`Socket events emitted for assignment of ticket ${ticketId}`);
+      creatorId = guest._id;
     }
 
-    // Send assignment notification
-    if (ticket.assignedTo) {
-      try {
+  const ticketData = {
+  name,
+  title,
+  detail: JSON.stringify(detail),
+  priority: priority || "low",
+  email,
+  type: type ? type.toLowerCase() : "support",
+  createdBy: createdBy || user?._id,
+  fromImap: false,
+  isComplete: false
+    };
+
+    if (company) {
+      ticketData.client = company.id || company;
+    }
+
+   if (engineer && engineer !== "Unassigned") {
+     ticketData.assignedTo = engineer.id || engineer;
+    }
+
+
+      const ticket = await Ticket.create(ticketData);
+
+      if (email && validateEmail(email)) {
+        await sendTicketCreate(ticket);
+      }
+
+      if (engineer && engineer.name !== "Unassigned") {
         const assignedUser = await User.findById(ticket.assignedTo);
         if (assignedUser) {
           await sendAssignedEmail(assignedUser.email);
-          await assignedNotification(assignedUser, ticket, { _id: req.user?._id });
+          const user = await checkSession(req);
+          await assignedNotification(engineer, ticket, user);
         }
-      } catch (notifErr) {
-        logger.error("Failed to send assignment notification:", notifErr);
       }
-    }
 
-    res.json({ 
-      success: true, 
-      ticket: populated,
-      message: assignedTo ? "Ticket assigned successfully" : "Ticket unassigned" 
-    });
-  } catch (err) {
-    logger.error("Assign ticket error:", err);
-    res.status(500).json({ success: false, message: err.message });
-  }
-});
+      const webhooks = await Webhook.find({ type: "ticket_created", active: true });
+      for (const webhook of webhooks) {
+        const message = {
+          event: "ticket_created",
+          id: ticket._id,
+          title: ticket.title,
+          priority: ticket.priority,
+          email: ticket.email,
+          name: ticket.name,
+          type: ticket.type,
+          createdBy: ticket.createdBy,
+          assignedTo: ticket.assignedTo,
+          client: ticket.client,
+        };
+        await sendWebhookNotification(webhook, message);
+      }
 
-/* --------------------------------------------
-   ADDITIONAL ROUTES
---------------------------------------------- */
+      const hog = track();
+      hog.capture({
+        event: "ticket_created",
+        distinctId: ticket._id.toString(),
+      });
 
-// Search tickets
-router.post("/tickets/search", async (req, res) => {
-  try {
-    await checkSession(req);
-    const { query } = req.body;
-    
-    if (!query) {
-      return res.status(400).json({ success: false, message: "Search query required" });
-    }
-
-    const tickets = await Ticket.find({
-      $or: [
-        { title: { $regex: query, $options: "i" } },
-        { number: { $regex: query, $options: "i" } },
-        { email: { $regex: query, $options: "i" } },
-        { detail: { $regex: query, $options: "i" } },
-      ],
-      hidden: false,
-    })
-      .limit(50)
-      .populate(populateTicket());
-
-    res.json({ success: true, tickets });
-  } catch (err) {
-    logger.error("Ticket search error:", err);
-    res.status(500).json({ success: false, message: err.message });
-  }
-});
-
-// Get ticket summary
-router.get("/summary", async (req, res) => {
-  try {
-    const user = await checkSession(req);
-
-    const [open, completed, unassigned, userTickets] = await Promise.all([
-      Ticket.countDocuments({ isComplete: false, hidden: false }),
-      Ticket.countDocuments({ isComplete: true, hidden: false }),
-      Ticket.countDocuments({ isComplete: false, assignedTo: null, hidden: false }),
-      Ticket.countDocuments({ assignedTo: user._id, isComplete: false, hidden: false }),
-    ]);
-
-    res.json({
-      success: true,
-      summary: { open, completed, unassigned, userTickets },
-    });
-  } catch (err) {
-    logger.error("Ticket summary error:", err);
-    res.status(500).json({ success: false, message: err.message });
-  }
-});
-
-// Bulk actions
-router.post("/tickets/bulk", async (req, res) => {
-  try {
-    await checkSession(req);
-    const { ticketIds, action, data } = req.body;
-
-    if (!ticketIds || !Array.isArray(ticketIds) || ticketIds.length === 0) {
-      return res.status(400).json({ success: false, message: "No tickets selected" });
-    }
-
-    let update = {};
-    let message = "";
-
-    switch (action) {
-      case "assign":
-        update.assignedTo = data?.assignedTo || null;
-        message = "Tickets assigned";
-        break;
-      case "status":
-        update.isComplete = Boolean(data?.status);
-        message = "Ticket status updated";
-        break;
-      case "priority":
-        update.priority = data?.priority || "medium";
-        message = "Ticket priority updated";
-        break;
-      case "delete":
-        update.hidden = true;
-        message = "Tickets deleted";
-        break;
-      default:
-        return res.status(400).json({ success: false, message: "Invalid action" });
-    }
-
-    const result = await Ticket.updateMany(
-      { _id: { $in: ticketIds } },
-      { $set: update }
-    );
-
-    // Emit socket events for updated tickets
-    const io = getSocket();
-    if (io) {
-      ticketIds.forEach(ticketId => {
-        io.to(`ticket:${ticketId}`).emit("ticket:update", { _id: ticketId, ...update });
+      res.status(200).send({
+        message: "Ticket created correctly",   
+        success: true,
+        id: ticket._id,
+      });
+    } catch (error) {
+      console.error("Error creating public ticket:", error);
+      res.status(500).send({
+        success: false,
+        message: "Internal server error",
+        error: error.message
       });
     }
-
-    res.json({
-      success: true,
-      message: `${message} (${result.modifiedCount} tickets)`,
-      count: result.modifiedCount,
-    });
-  } catch (err) {
-    logger.error("Bulk action error:", err);
-    res.status(500).json({ success: false, message: err.message });
   }
-});
+);
+
+// Get ticket by IDx
+router.get(
+  "/:id",
+  requirePermission(["issue::read"]),
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+
+      const ticket = await Ticket.findById(id)
+        .populate(ticketPopulate);
+
+      if (!ticket) {
+        return res.status(404).send({
+          success: false,
+          message: "Ticket not found"
+        });
+      }
+
+      const timeTracking = await TimeTracking.find({ ticketId: id })
+        .populate('user', 'name');
+
+      const comments = await Comment.find({ ticketId: id })
+        .populate('user', 'name');
+
+      const files = []; // Assuming you have a TicketFile model
+
+      const result = {
+        ...normalizeTicket(ticket),
+        comments,
+        TimeTracking: timeTracking,
+        files
+      };
+
+      res.send({
+        ticket: result,
+        success: true,
+      });
+    } catch (error) {
+      console.error("Error fetching ticket:", error);
+      res.status(500).send({
+        success: false,
+        message: "Internal server error",
+        error: error.message
+      });
+    }
+  }
+);
+
+// Get all open tickets
+router.get(
+  "/tickets/open",
+  requirePermission(["issue::read"]),
+  async (req, res) => {
+    try {
+      const tickets = await Ticket.find({ isComplete: false, hidden: false })
+        .sort({ createdAt: -1 })
+        .populate(ticketPopulate);
+
+      res.send({
+        tickets: tickets.map(normalizeTicket),
+        success: true,
+      });
+    } catch (error) {
+      console.error("Error fetching open tickets:", error);
+      res.status(500).send({
+        success: false,
+        message: "Internal server error",
+        error: error.message
+      });
+    }
+  }
+);
+
+// Search tickets--------------------------->
+router.post(
+  "/tickets/search",
+  requirePermission(["issue::read"]),
+  async (req, res) => {
+    try {
+      const { query } = req.body;
+
+      const tickets = await Ticket.find({
+        title: { $regex: query, $options: 'i' }
+      });
+
+      res.send({
+        tickets: tickets,
+        success: true,
+      });
+    } catch (error) {
+      console.error("Error searching tickets:", error);
+      res.status(500).send({
+        success: false,
+        message: "Internal server error",
+        error: error.message
+      });
+    }
+  }
+);
+
+// Get all tickets (admin)
+router.get(
+  "/tickets/all",
+  requirePermission(["issue::read"]),
+  async (req, res) => {
+    try {
+      // const bearer = req.headers.authorization?.split(" ")[1];
+      // const token = checkToken(bearer);
+
+      const tickets = await Ticket.find({ hidden: false })
+        .sort({ createdAt: -1 })
+        .populate(ticketPopulate);
+
+      res.send({
+        tickets: tickets.map(normalizeTicket),
+        success: true,
+      });
+    } catch (error) {
+      console.error("Error fetching all tickets:", error);
+      res.status(500).send({
+        success: false,
+        message: "Internal server error",
+        error: error.message
+      });
+    }
+  }
+);
+
+// Get user's open tickets
+router.get(
+  "/tickets/user/open",
+  requirePermission(["issue::read"]),
+  async (req, res) => {
+    try {
+      const user = await checkSession(req);
+      if (!user) {
+        return res.status(401).send({ success: false, message: "Unauthorized" });
+      }
+
+      const tickets = await Ticket.find({
+        isComplete: false,
+        assignedTo: user._id,
+        hidden: false
+      })
+      .populate(ticketPopulate);
+
+      res.send({
+        tickets: tickets.map(normalizeTicket),
+        success: true,
+      });
+    } catch (error) {
+      console.error("Error fetching user open tickets:", error);
+      res.status(500).send({
+        success: false,
+        message: "Internal server error",
+        error: error.message
+      });
+    }
+  }
+);
+
+// Get completed tickets
+router.get(
+  "/tickets/completed",
+  requirePermission(["issue::read"]),
+  async (req, res) => {
+    try {
+      const tickets = await Ticket.find({ isComplete: true, hidden: false })
+        .populate(ticketPopulate);
+
+      res.send({
+        tickets: tickets.map(normalizeTicket),
+        success: true,
+      });
+    } catch (error) {
+      console.error("Error fetching completed tickets:", error);
+      res.status(500).send({
+        success: false,
+        message: "Internal server error",
+        error: error.message
+      });
+    }
+  }
+);
+
+// Get unassigned tickets
+router.get(
+  "/tickets/unassigned",
+  requirePermission(["issue::read"]),
+  async (req, res) => {
+    try {
+      const tickets = await Ticket.find({
+        isComplete: false,
+        assignedTo: null,
+        hidden: false
+      });
+
+      res.send({
+        success: true,
+        tickets: tickets,
+      });
+    } catch (error) {
+      console.error("Error fetching unassigned tickets:", error);
+      res.status(500).send({
+        success: false,
+        message: "Internal server error",
+        error: error.message
+      });
+    }
+  }
+);
+
+// Assign or unassign ticket
+router.patch(
+  "/assign/:id",
+  requirePermission(["issue::update"]),
+  async (req, res) => {
+    try {
+      const actingUser = await checkSession(req);
+      if (!actingUser) {
+        return res.status(401).send({ success: false, message: "Unauthorized" });
+      }
+
+      const { id } = req.params;
+      const { assignedTo } = req.body;
+
+      const ticket = await Ticket.findById(id);
+      if (!ticket) {
+        return res.status(404).send({
+          success: false,
+          message: "Ticket not found"
+        });
+      }
+
+      ticket.assignedTo = assignedTo || null;
+      await ticket.save();
+
+      const populatedTicket = await Ticket.findById(ticket._id).populate(ticketPopulate);
+
+      res.send({
+        success: true,
+        ticket: normalizeTicket(populatedTicket),
+      });
+    } catch (error) {
+      console.error("Error assigning ticket:", error);
+      res.status(500).send({
+        success: false,
+        message: "Internal server error",
+        error: error.message
+      });
+    }
+  }
+);
+
+// Update ticket
+router.put(
+  "/ticket/update",
+  requirePermission(["issue::update"]),
+  async (req, res) => {
+    try {
+      const { id, note, detail, title, priority, status, client } = req.body;
+      const user = await checkSession(req);
+
+      const issue = await Ticket.findById(id);
+      if (!issue) {
+        return res.status(404).send({
+          success: false,
+          message: "Ticket not found"
+        });
+      }
+
+      const updateData = {
+        detail,
+        note,
+        title,
+        priority,
+        status
+      };
+
+      if (client) {
+        updateData.client = client;
+      }
+
+      await Ticket.findByIdAndUpdate(id, updateData);
+
+      if (priority && issue.priority !== priority) {
+        await priorityNotification(issue, user, issue.priority, priority);
+      }
+
+      if (status && issue.status !== status) {
+        await statusUpdateNotification(issue, user, status);
+      }
+
+      res.send({
+        success: true,
+      });
+    } catch (error) {
+      console.error("Error updating ticket:", error);
+      res.status(500).send({
+        success: false,
+        message: "Internal server error",
+        error: error.message
+      });
+    }
+  }
+);
+
+// Transfer ticket to another user
+// Transfer ticket
+router.post(
+  "/ticket/transfer",
+  requirePermission(["issue::transfer"]),
+  async (req, res) => {
+    try {
+      const user = await checkSession(req);
+      if (!user || !user._id) {
+        return res.status(401).send({
+          success: false,
+          message: "Unauthorized: user not found in session",
+        });
+      }
+
+      const { ticketId, newAssigneeId } = req.body;
+
+      if (!ticketId || !newAssigneeId) {
+        return res.status(400).send({
+          success: false,
+          message: "ticketId and newAssigneeId are required",
+        });
+      }
+
+      // Find the ticket
+      const ticket = await Ticket.findById(ticketId);
+      if (!ticket) {
+        return res.status(404).send({
+          success: false,
+          message: "Ticket not found",
+        });
+      }
+
+      // Update ticket assignee
+      ticket.assignedTo = newAssigneeId;
+      await ticket.save();
+
+      // Create notification for the new assignee
+      await Notification.create({
+        userId: newAssigneeId,
+        ticketId: ticket._id,
+        title: "Ticket Transferred",
+        message: `Ticket "${ticket.title}" has been transferred to you.`,
+        text: `You are now assigned to ticket: ${ticket.title}`,
+        type: "info",
+        relatedEntity: "ticket",
+        relatedEntityId: ticket._id,
+      });
+
+      // Optionally: Send email notification
+      try {
+        await sendAssignedEmail("newassignee@email.com"); // replace with actual email lookup
+      } catch (err) {
+        console.error("Error sending assigned email:", err.message);
+      }
+
+      res.send({
+        success: true,
+        message: "Ticket transferred successfully",
+      });
+    } catch (error) {
+      console.error("Error transferring ticket:", error);
+      res.status(500).send({
+        success: false,
+        message: "Internal server error",
+        error: error.message,
+      });
+    }
+  }
+);
+
+
+// Transfer ticket to another client
+// Transfer ticket to another client
+// Transfer ticket to another client
+router.post(
+  "/transfer/client",
+  requirePermission(["issue::transfer"]),
+  async (req, res) => {
+    try {
+      const user = await checkSession(req);
+      if (!user || !user._id) {
+        return res.status(401).send({
+          success: false,
+          message: "Unauthorized: user not found in session",
+        });
+      }
+
+      const { clientId, ticketId } = req.body;
+
+      if (!clientId || !ticketId) {
+        return res.status(400).send({
+          success: false,
+          message: "clientId and ticketId are required",
+        });
+      }
+
+      // Find ticket
+      const ticket = await Ticket.findById(ticketId);
+      if (!ticket) {
+        return res.status(404).send({
+          success: false,
+          message: "Ticket not found",
+        });
+      }
+
+      // Find client
+      const client = await Client.findById(clientId);
+      if (!client) {
+        return res.status(404).send({
+          success: false,
+          message: "Client not found",
+        });
+      }
+
+      // Update ticket with both clientId and clientName
+      ticket.clientId = client._id;
+      ticket.clientName = client.name;
+      await ticket.save();
+
+      // Create notification
+      await Notification.create({
+        userId: user._id,
+        ticketId: ticket._id,
+        title: "Ticket Client Transfer",
+        message: `Ticket "${ticket.title}" has been transferred to client "${client.name}".`,
+        text: `The ticket "${ticket.title}" is now assigned to client "${client.name}".`,
+        type: "info",
+        relatedEntity: "client",
+        relatedEntityId: client._id,
+      });
+
+      res.send({
+        success: true,
+        message: `Ticket transferred to client "${client.name}" successfully`,
+      });
+    } catch (error) {
+      console.error("Error transferring ticket to client:", error);
+      res.status(500).send({
+        success: false,
+        message: "Internal server error",
+        error: error.message,
+      });
+    }
+  }
+);
+
+
+// Add comment to ticket
+router.post(
+  "/ticket/comment",
+  requirePermission(["issue::comment"]),
+  async (req, res) => {
+    try {
+      const { text, id, public: public_comment } = req.body;
+      const user = await checkSession(req);
+
+      await Comment.create({
+        text,
+        public: public_comment,
+        ticketId: id,
+        userId: user._id,
+      });
+
+      const ticket = await Ticket.findById(id);
+      if (!ticket) {
+        return res.status(404).send({
+          success: false,
+          message: "Ticket not found"
+        });
+      }
+
+      if (public_comment && ticket.email) {
+        await sendComment(text, ticket.title, ticket._id, ticket.email);
+      }
+
+      await commentNotification(ticket, user);
+
+      const hog = track();
+      hog.capture({
+        event: "ticket_comment",
+        distinctId: ticket._id.toString(),
+      });
+
+      res.send({
+        success: true,
+      });
+    } catch (error) {
+      console.error("Error adding comment:", error);
+      res.status(500).send({
+        success: false,
+        message: "Internal server error",
+        error: error.message
+      });
+    }
+  }
+);
+
+// Delete comment
+router.post(
+  "/comment/delete",
+  requirePermission(["issue::comment"]),
+  async (req, res) => {
+    try {
+      const { id } = req.body;
+
+      await Comment.findByIdAndDelete(id);
+
+      res.send({
+        success: true,
+      });
+    } catch (error) {
+      console.error("Error deleting comment:", error);
+      res.status(500).send({
+        success: false,
+        message: "Internal server error",
+        error: error.message
+      });
+    }
+  }
+);
+
+// Update ticket status
+router.put(
+  "/status/update",
+  requirePermission(["issue::update"]),
+  async (req, res) => {
+    try {
+      const { status, id } = req.body;
+      const user = await checkSession(req);
+
+      const ticket = await Ticket.findByIdAndUpdate(
+        id,
+        { isComplete: status },
+        { new: true }
+      );
+
+      if (!ticket) {
+        return res.status(404).send({
+          success: false,
+          message: "Ticket not found"
+        });
+      }
+
+      await activeStatusNotification(ticket, user, status);
+      await sendTicketStatus(ticket);
+
+      const webhooks = await Webhook.find({ type: "ticket_status_changed", active: true });
+      for (const webhook of webhooks) {
+        const s = status ? "Completed" : "Outstanding";
+        if (webhook.url.includes("discord.com")) {
+          const message = {
+            content: `Ticket ${ticket._id} created by ${ticket.email}, has had its status changed to ${s}`,
+            avatar_url: "https://avatars.githubusercontent.com/u/76014454?s=200&v=4",
+            username: "Peppermint.sh",
+          };
+          await axios.post(webhook.url, message);
+        } else {
+          await axios.post(webhook.url, {
+            data: `Ticket ${ticket._id} created by ${ticket.email}, has had its status changed to ${s}`,
+          });
+        }
+      }
+
+      res.send({
+        success: true,
+      });
+    } catch (error) {
+      console.error("Error updating ticket status:", error);
+      res.status(500).send({
+        success: false,
+        message: "Internal server error",
+        error: error.message
+      });
+    }
+  }
+);
+
+// Hide ticket
+router.put(
+  "/status/hide",
+  requirePermission(["issue::update"]),
+  async (req, res) => {
+    try {
+      const { hidden, id } = req.body;
+
+      await Ticket.findByIdAndUpdate(id, { hidden });
+
+      res.send({
+        success: true,
+      });
+    } catch (error) {
+      console.error("Error hiding ticket:", error);
+      res.status(500).send({
+        success: false,
+        message: "Internal server error",
+        error: error.message
+      });
+    }
+  }
+);
+
+// Lock ticket
+router.put(
+  "/status/lock",
+  requirePermission(["issue::update"]),
+  async (req, res) => {
+    try {
+      const { locked, id } = req.body;
+
+      await Ticket.findByIdAndUpdate(id, { locked });
+
+      res.send({
+        success: true,
+      });
+    } catch (error) {
+      console.error("Error locking ticket:", error);
+      res.status(500).send({
+        success: false,
+        message: "Internal server error",
+        error: error.message
+      });
+    }
+  }
+);
+
+// Delete ticket
+router.post(
+  "/delete",
+  requirePermission(["issue::delete"]),
+  async (req, res) => {
+    try {
+      const { id } = req.body;
+
+      await Ticket.findByIdAndDelete(id);
+
+      res.send({
+        success: true,
+      });
+    } catch (error) {
+      console.error("Error deleting ticket:", error);
+      res.status(500).send({
+        success: false,
+        message: "Internal server error",
+        error: error.message
+      });
+    }
+  }
+);
+
+// Get email templates
+router.get(
+  "/tickets/templates",
+  requirePermission(["email_template::manage"]),
+  async (req, res) => {
+    try {
+      const templates = await EmailTemplate.find({})
+        .select('createdAt updatedAt type id');
+
+      res.send({
+        success: true,
+        templates: templates,
+      });
+    } catch (error) {
+      console.error("Error fetching templates:", error);
+      res.status(500).send({
+        success: false,
+        message: "Internal server error",
+        error: error.message
+      });
+    }
+  }
+);
+
+// Get template by ID
+router.get(
+  "/template/:id",
+  requirePermission(["email_template::manage"]),
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+
+      const template = await EmailTemplate.findById(id);
+
+      res.send({
+        success: true,
+        template: template,
+      });
+    } catch (error) {
+      console.error("Error fetching template:", error);
+      res.status(500).send({
+        success: false,
+        message: "Internal server error",
+        error: error.message
+      });
+    }
+  }
+);
+
+// Update template
+router.put(
+  "/template/:id",
+  requirePermission(["email_template::manage"]),
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { html } = req.body;
+
+      await EmailTemplate.findByIdAndUpdate(id, { html });
+
+      res.send({
+        success: true,
+      });
+    } catch (error) {
+      console.error("Error updating template:", error);
+      res.status(500).send({
+        success: false,
+        message: "Internal server error",
+        error: error.message
+      });
+    }
+  }
+);
+
+// Get external user's open tickets
+router.get(
+  "/user/open/external",
+  requirePermission(["issue::read"]),
+  async (req, res) => {
+    try {
+      const user = await checkSession(req);
+      if (!user) {
+        return res.status(401).send({ success: false, message: "Unauthorized" });
+      }
+
+      const tickets = await Ticket.find({
+        isComplete: false,
+        email: user.email,
+        hidden: false
+      })
+      .populate(ticketPopulate);
+
+      res.send({
+        tickets: tickets.map(normalizeTicket),
+        success: true,
+      });
+    } catch (error) {
+      console.error("Error fetching external user tickets:", error);
+      res.status(500).send({
+        success: false,
+        message: "Internal server error",
+        error: error.message
+      });
+    }
+  }
+);
+
+// Get external user's closed tickets
+router.get(
+  "/user/closed/external",
+  requirePermission(["issue::read"]),
+  async (req, res) => {
+    try {
+      const user = await checkSession(req);
+      if (!user) {
+        return res.status(401).send({ success: false, message: "Unauthorized" });
+      }
+
+      const tickets = await Ticket.find({
+        isComplete: true,
+        email: user.email,
+        hidden: false
+      })
+      .populate(ticketPopulate);
+
+      res.send({
+        tickets: tickets.map(normalizeTicket),
+        success: true,
+      });
+    } catch (error) {
+      console.error("Error fetching external user closed tickets:", error);
+      res.status(500).send({
+        success: false,
+        message: "Internal server error",
+        error: error.message
+      });
+    }
+  }
+);
+
+// Get all external user tickets
+router.get(
+  "/user/external",
+  requirePermission(["issue::read"]),
+  async (req, res) => {
+    try {
+      const user = await checkSession(req);
+      if (!user) {
+        return res.status(401).send({ success: false, message: "Unauthorized" });
+      }
+
+      const tickets = await Ticket.find({
+        email: user.email,
+        hidden: false
+      })
+      .populate(ticketPopulate);
+
+      res.send({
+        tickets: tickets.map(normalizeTicket),
+        success: true,
+      });
+    } catch (error) {
+      console.error("Error fetching all external user tickets:", error);
+      res.status(500).send({
+        success: false,
+        message: "Internal server error",
+        error: error.message
+      });
+    }
+  }
+);
+
+// Subscribe to ticket
+router.get(
+  "/subscribe/:id",
+  requirePermission(["issue::read"]),
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const user = await checkSession(req);
+
+      if (!user || !user._id) {
+        return res.status(401).send({
+          success: false,
+          message: "Unauthorized: user not found in session"
+        });
+      }
+
+      const ticket = await Ticket.findById(id);
+      if (!ticket) {
+        return res.status(404).send({
+          success: false,
+          message: "Ticket not found"
+        });
+      }
+
+      const following = ticket.following || [];
+
+      // Ensure values are strings before comparing
+      const userId = user._id.toString();
+      if (following.includes(userId)) {
+        return res.send({
+          success: false,
+          message: "You are already following this issue"
+        });
+      }
+
+      following.push(userId);
+      await Ticket.findByIdAndUpdate(id, { following });
+
+      res.send({
+        success: true,
+      });
+    } catch (error) {
+      console.error("Error subscribing to ticket:", error);
+      res.status(500).send({
+        success: false,
+        message: "Internal server error",
+        error: error.message
+      });
+    }
+  }
+);
+
+// Unsubscribe from ticket
+router.get(
+  "/unsubscribe/:id",
+  requirePermission(["issue::read"]),
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const user = await checkSession(req);
+
+      const ticket = await Ticket.findById(id);
+      if (!ticket) {
+        return res.status(404).send({
+          success: false,
+          message: "Ticket not found"
+        });
+      }
+
+      const following = ticket.following || [];
+      if (!following.includes(user._id.toString())) {
+        return res.send({
+          success: false,
+          message: "You are not following this issue"
+        });
+      }
+
+      const updatedFollowing = following.filter(userId => userId !== user._id.toString());
+      await Ticket.findByIdAndUpdate(id, { following: updatedFollowing });
+
+      res.send({
+        success: true,
+      });
+    } catch (error) {
+      console.error("Error unsubscribing from ticket:", error);
+      res.status(500).send({
+        success: false,
+        message: "Internal server error",
+        error: error.message
+      });
+    }
+  }
+);
 
 module.exports = router;

@@ -33,7 +33,7 @@ router.post(
 // Update client
 router.post(
   '/update',
-  // requirePermission(['client::update']),
+  requirePermission(['client::update']),
   async (req, res) => {
     const { name, email, number, contactName, id } = req.body;
 
@@ -49,7 +49,7 @@ router.post(
 // Get all clients
 router.get(
   '/all',
-  // requirePermission(['client::read']),
+  requirePermission(['client::read']),
   async (req, res) => {
     const clients = await Client.find({});
 
@@ -60,7 +60,7 @@ router.get(
 // Delete client
 router.delete(
   '/:id/delete-client',
-  // requirePermission(['client::delete']),
+  requirePermission(['client::delete']),
   async (req, res) => {
     const { id } = req.params;
 

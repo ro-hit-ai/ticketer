@@ -1,16 +1,15 @@
 const express = require('express');
-const mongoose = require('mongoose');
-const bcrypt = require('bcrypt');
+const bcrypt = require('bcryptjs');
 const router = express.Router();
 const User = require('../models/User');
-// Import middleware and tracking (assuming you have these)
-const { track } = require('../lib/hog');
+const Notification = require('../models/Notification');
 const { requirePermission } = require('../lib/roles');
 const { checkSession } = require('../lib/session');
+
 // All users
 router.get(
   '/all',
-  requirePermission(['user::read']), // Uncomment if you implement this middleware
+  requirePermission(['user::read']),
   async (req, res) => {
     try {
       const users = await User.find(
@@ -35,12 +34,12 @@ router.get(
 // New user
 router.post(
   '/new',
+  requirePermission(['user::create', 'user::manage'], false),
   async (req, res) => {
     try {
-      // const session = await checkSession(req); // Uncomment if you implement this
-      const session = { isAdmin: true }; // Placeholder - replace with actual session check
+      const session = await checkSession(req);
       
-      if (session.isAdmin) {
+      if (session && (session.isAdmin || session.permissions.includes('*') || session.permissions.includes('user::manage'))) {
         const { email, password, name, admin } = req.body;
 
         const e = email.toLowerCase();
@@ -82,17 +81,17 @@ router.post(
 // (ADMIN) Reset password
 router.put(
   '/reset-password',
+  requirePermission(['user::update', 'user::manage'], false),
   async (req, res) => {
     try {
       const { password, id } = req.body;
-      // const session = await checkSession(req); // Uncomment if you implement this
-      const session = { isAdmin: true }; // Placeholder - replace with actual session check
+      const session = await checkSession(req);
 
-      if (session.isAdmin) {
+      if (session && (session.isAdmin || session.permissions.includes('*') || session.permissions.includes('user::manage'))) {
         const hashedPass = await bcrypt.hash(password, 10);
         
         await User.findByIdAndUpdate(id, {
-          password: hashedPass, 
+          password: hashedPass,
           updatedAt: Date.now()
         });
 
@@ -112,12 +111,12 @@ router.put(
 
 // Mark Notification as read
 router.get(
-  '/api/v1/user/notification/:id',
+  '/notification/:id',
+  requirePermission(['user::read', 'issue::read'], false),
   async (req, res) => {
     try {
       const { id } = req.params;
-      // const session = await checkSession(req); // Uncomment if you implement this
-      const session = { id: 'user-id' }; // Placeholder - replace with actual session check
+      const session = await checkSession(req);
       
       if (!session) {
         return res.status(401).send({
@@ -136,7 +135,7 @@ router.get(
         });
       }
       
-      if (notification.userId.toString() !== session.id) {
+      if (notification.userId.toString() !== String(session.id)) {
         return res.status(403).send({
           message: 'Access denied. You can only manage your own notifications.',
           success: false

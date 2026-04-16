@@ -2,10 +2,20 @@ const mongoose = require("mongoose");
 
 const EmailMessageSchema = new mongoose.Schema({
   mailbox: { type: mongoose.Schema.Types.ObjectId, ref: "EmailQueue", required: true },
+  threadId: { type: mongoose.Schema.Types.ObjectId, ref: "Thread", default: null, index: true },
+  sourceCaseId: { type: String, trim: true, uppercase: true, default: null, index: true },
+  direction: { type: String, enum: ["inbound", "outbound"], default: "inbound", index: true },
   messageId: { type: String, index: true }, // IMAP UID or Gmail messageId
+  inReplyTo: { type: String, trim: true, default: null, index: true },
+  references: [{ type: String, trim: true }],
+  headers: { type: mongoose.Schema.Types.Mixed, default: {} },
+  sentByUserId: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+  sentByRole: { type: String, trim: true, default: null },
+  recipientUserId: { type: String, trim: true, default: null },
+  // folder: { type: String, enum: ["inbox", "sent", "received", "drafts", "trash"], default: "inbox" },
   folder: {
      type: String,
-     enum: ["inbox", "sent", "received", "drafts", "trash", "resolved", "internal","processed"],
+     enum: ["inbox", "sent", "received", "drafts", "trash", "resolved", "internal"],
      default: "inbox"
   },
   subject: String,
@@ -23,32 +33,16 @@ const EmailMessageSchema = new mongoose.Schema({
       size: Number,
       url: String, // if stored in S3/GridFS
     }
-  ],
-  // ✅ NEW PRIORITY FIELDS - PERFECT!
-  priority: { 
-    type: String, 
-    enum: ["pending", "low", "medium", "high"], 
-    default: "pending" 
-  },
-  priority_updated_at: { 
-    type: Date 
-  },
-  sentiment_analyzed: { 
-    type: Boolean, 
-    default: false 
-  },
-  // ✅ ADD THIS: Link to ticket
-  ticketId: { 
-    type: mongoose.Schema.Types.ObjectId, 
-    ref: 'Ticket',
-    default: null 
-  }
+  ]
 }, { timestamps: true });
 
-// Add index for efficient priority queries
-EmailMessageSchema.index({ priority: 1, sentiment_analyzed: 1 });
-EmailMessageSchema.index({ folder: 1, isRead: 1 });
-// Add index for ticket linking
-EmailMessageSchema.index({ ticketId: 1 });
+EmailMessageSchema.index(
+  { mailbox: 1, messageId: 1 },
+  { unique: true, partialFilterExpression: { messageId: { $type: "string" } } }
+);
+EmailMessageSchema.index({ threadId: 1, date: -1 });
+EmailMessageSchema.index({ sourceCaseId: 1, date: -1 });
+EmailMessageSchema.index({ inReplyTo: 1 });
+EmailMessageSchema.index({ references: 1 });
 
 module.exports = mongoose.model("EmailMessage", EmailMessageSchema);

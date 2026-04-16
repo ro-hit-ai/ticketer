@@ -1,4 +1,4 @@
-const { AuthorizationCode } = require("simple-oauth2");
+const { AuthorizationCode } = require('simple-oauth2');
 
 const oauthClients = {};
 
@@ -11,9 +11,8 @@ function getOAuthClient(providerConfig) {
         secret: providerConfig.clientSecret,
       },
       auth: {
-        tokenHost: process.env.OAUTH_TOKEN_HOST,       // https://accounts.google.com
-        tokenPath: process.env.OAUTH_TOKEN_PATH,       // /oauth2/v4/token
-        authorizePath: process.env.OAUTH_AUTHORIZE_PATH, // /o/oauth2/v2/auth
+        tokenHost: providerConfig.tokenUrl,
+        authorizeHost: providerConfig.authorizationUrl,
       },
     });
   }

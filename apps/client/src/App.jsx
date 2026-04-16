@@ -1,10 +1,9 @@
 // src/App.jsx
-import React, { useEffect } from "react";
+import React from "react";
 import {
   Routes,
   Route,
   Navigate,
-  useNavigate,
   useLocation,
 } from "react-router-dom";
 
@@ -14,7 +13,6 @@ import AdminLayout from "./layouts/adminLayout";
 import PortalLayout from "./layouts/portalLayout";
 import AgentsLayout from "./layouts/agentLayout";
 
-import Home from "./pages/index";
 import NotificationsPage from "./pages/notifications";
 import OnboardingPage from "./pages/onboarding";
 import ProfilePage from "./pages/profile";
@@ -34,6 +32,9 @@ import Clients from "./pages/admin/clients";
 import NewClient from "./pages/admin/clients/new";
 import EmailQueuesList from "./pages/admin/email-queues";
 import NewEmailQueue from "./pages/admin/email-queues/new";
+import AdminMailboxes from "./pages/admin/mailboxes";
+import AdminMessages from "./pages/admin/messages";
+import AdminThreads from "./pages/admin/threads";
 import Webhooks from "./pages/admin/webhooks";
 import SMTP from "./pages/admin/smtp";
 import OAuth from "./pages/admin/smtp/oauth";
@@ -41,6 +42,11 @@ import Authentication from "./pages/admin/authentication";
 import Roles from "./pages/admin/roles";
 import NewRole from "./pages/admin/roles/new";
 import Logs from "./pages/admin/logs";
+import AgentMailboxes from "./pages/agents/mailboxes";
+import AgentMessages from "./pages/agents/messages";
+import AgentThreads from "./pages/agents/threads";
+import PortalMessages from "./pages/portal/messages";
+import PortalThreads from "./pages/portal/threads";
 
 import { useUser } from "./store/session";
 
@@ -75,11 +81,10 @@ class ErrorBoundary extends React.Component {
 /* ============================================================
    ROLE-BASED ACCESS CONTROL
 ============================================================ */
-function RequireRole({ children, adminOnly, agentOnly }) {
+function RequireRole({ children, adminOnly, agentOnly, portalOnly }) {
   const { user, loading, isAdmin, isAgent } = useUser();
-  const navigate = useNavigate();
 
-  if (loading) {
+  if (loading && !user) {
     return (
       <div className="flex h-screen items-center justify-center">
         <div className="animate-spin h-10 w-10 border-b-2 border-primary rounded-full"></div>
@@ -87,18 +92,21 @@ function RequireRole({ children, adminOnly, agentOnly }) {
     );
   }
 
-  if (!user) return <Navigate to="/auth/login" replace />;
+  if (!user) {
+    return <Navigate to="/auth/login" replace />;
+  }
 
-  useEffect(() => {
-    if (!user) return;
+  if (adminOnly && !isAdmin) {
+    return <Navigate to={isAgent ? "/agents/tickets?status=open" : "/portal"} replace />;
+  }
 
-    if (adminOnly && !isAdmin) navigate("/portal", { replace: true });
-    if (agentOnly && !isAgent) navigate("/portal", { replace: true });
+  if (agentOnly && !isAgent) {
+    return <Navigate to={isAdmin ? "/admin" : "/portal"} replace />;
+  }
 
-    if (isAdmin && !adminOnly) navigate("/admin", { replace: true });
-    if (isAgent && !agentOnly && !adminOnly)
-      navigate("/agents/tickets?status=open", { replace: true });
-  }, [user]);
+  if (portalOnly && (isAdmin || isAgent)) {
+    return <Navigate to={isAdmin ? "/admin" : "/agents/tickets?status=open"} replace />;
+  }
 
   return children;
 }
@@ -108,28 +116,27 @@ function RequireRole({ children, adminOnly, agentOnly }) {
 ============================================================ */
 function RedirectAfterLogin() {
   const { user, loading } = useUser();
-  const navigate = useNavigate();
   const location = useLocation();
 
-  useEffect(() => {
-    if (loading || !user) return;
-    if (!location.pathname.startsWith("/auth")) return;
+  if (loading || !user || !location.pathname.startsWith("/auth")) {
+    return null;
+  }
 
-    if (user.isAdmin) navigate("/admin", { replace: true });
-    else if (user.isAgent) navigate("/agents/tickets?status=open", { replace: true });
-    else navigate("/portal", { replace: true });
-  }, [user]);
+  if (user.isAdmin) {
+    return <Navigate to="/admin" replace />;
+  }
 
-  return null;
+  if (user.isAgent) {
+    return <Navigate to="/agents/tickets?status=open" replace />;
+  }
+
+  return <Navigate to="/portal" replace />;
 }
 
-/* ============================================================
-   MAIN APP
-============================================================ */
-function App() {
+function LandingRoute() {
   const { user, loading } = useUser();
 
-  if (loading) {
+  if (loading && !user) {
     return (
       <div className="flex items-center justify-center h-screen bg-background">
         <div className="animate-spin h-12 w-12 border-b-2 border-primary rounded-full"></div>
@@ -139,11 +146,32 @@ function App() {
   }
 
   if (!user) {
+    return <Navigate to="/auth/login" replace />;
+  }
+
+  if (user.isAdmin) {
+    return <Navigate to="/admin" replace />;
+  }
+
+  if (user.isAgent) {
+    return <Navigate to="/agents/tickets?status=open" replace />;
+  }
+
+  return <Navigate to="/portal" replace />;
+}
+
+/* ============================================================
+   MAIN APP
+============================================================ */
+function App() {
+  const { user, loading } = useUser();
+
+  if (loading && !user) {
     return (
-      <Routes>
-        <Route path="/auth/login" element={<LoginPage />} />
-        <Route path="*" element={<Navigate to="/auth/login" replace />} />
-      </Routes>
+      <div className="flex items-center justify-center h-screen bg-background">
+        <div className="animate-spin h-12 w-12 border-b-2 border-primary rounded-full"></div>
+        <p className="ml-4">Authenticating...</p>
+      </div>
     );
   }
 
@@ -154,7 +182,7 @@ function App() {
 
         <Routes>
           {/* PUBLIC */}
-          <Route path="/" element={<Home />} />
+          <Route path="/" element={<LandingRoute />} />
           <Route path="/auth/login" element={<LoginPage />} />
           <Route path="/onboarding" element={<OnboardingPage />} />
           <Route path="/submit" element={<SubmitPage />} />
@@ -165,7 +193,7 @@ function App() {
           <Route
             path="/portal"
             element={
-              <RequireRole>
+              <RequireRole portalOnly>
                 <PortalLayout />
               </RequireRole>
             }
@@ -182,6 +210,8 @@ function App() {
             </Route>
 
             <Route path="profile" element={<ProfilePage />} />
+            <Route path="threads" element={<PortalThreads />} />
+            <Route path="messages" element={<PortalMessages />} />
           </Route>
 
           {/* ============================================================
@@ -205,6 +235,9 @@ function App() {
             </Route>
 
             <Route path="profile" element={<ProfilePage />} />
+            <Route path="mailboxes" element={<AgentMailboxes />} />
+            <Route path="threads" element={<AgentThreads />} />
+            <Route path="messages" element={<AgentMessages />} />
           </Route>
 
           {/* ============================================================
@@ -228,6 +261,9 @@ function App() {
 
             <Route path="email-queues" element={<EmailQueuesList />} />
             <Route path="email-queues/new" element={<NewEmailQueue />} />
+            <Route path="mailboxes" element={<AdminMailboxes />} />
+            <Route path="threads" element={<AdminThreads />} />
+            <Route path="messages" element={<AdminMessages />} />
 
             <Route path="webhooks" element={<Webhooks />} />
             <Route path="smtp" element={<SMTP />} />
@@ -239,7 +275,10 @@ function App() {
           </Route>
 
           {/* 404 */}
-          <Route path="*" element={<NotFoundPage />} />
+          <Route
+            path="*"
+            element={user ? <NotFoundPage /> : <Navigate to="/auth/login" replace />}
+          />
         </Routes>
       </ErrorBoundary>
     </SidebarProvider>

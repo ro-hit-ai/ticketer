@@ -19,6 +19,7 @@ const TicketDetail = () => {
   const [hasError, setHasError] = useState(false);
   const [updating, setUpdating] = useState(false);
   const [postingComment, setPostingComment] = useState(false);
+  const [activeTab, setActiveTab] = useState("activity");
   
   const chatRef = useRef(null);
 
@@ -525,293 +526,318 @@ const TicketDetail = () => {
   }
 
   return (
-    <div className="space-y-6 p-4 max-w-4xl mx-auto">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => navigate(-1)}
-            className="flex items-center text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md hover:bg-gray-100 transition-colors"
-          >
-            <ArrowLeft className="h-4 w-4 mr-2" />
-            Back to Tickets
-          </button>
-          <div className="text-sm text-gray-500 font-mono bg-gray-100 px-2 py-1 rounded">
-            #{ticket.number}
-          </div>
-        </div>
-        
-        <div className="flex items-center gap-2">
-          <button
-            onClick={handleRefresh}
-            className="p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-md transition-colors"
-            title="Refresh"
-            disabled={loading}
-          >
-            <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
-          </button>
-          <button
-            onClick={handleCopyLink}
-            className="p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-md transition-colors"
-            title="Copy link"
-          >
-            <Copy className="h-4 w-4" />
-          </button>
-        </div>
-      </div>
-
-      {/* Ticket Header */}
-      <div className="bg-white rounded-lg border border-gray-200 p-4 sm:p-6 shadow-sm">
-        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 mb-4">
-          <h1 className="text-xl sm:text-2xl font-bold text-gray-900 break-words">
-            {ticket.title}
-          </h1>
-          <div className="flex flex-wrap gap-2">
-            <span className={`px-3 py-1 rounded-full text-xs font-semibold ${
-              ticket.isComplete 
-                ? "bg-green-100 text-green-800 border border-green-200" 
-                : "bg-yellow-100 text-yellow-800 border border-yellow-200"
-            }`}>
-              {ticket.isComplete ? "Closed" : "Open"}
-            </span>
-            <span className={`px-3 py-1 rounded-full text-xs font-semibold ${
-              ticket.priority === 'high' ? 'bg-red-100 text-red-800 border border-red-200' :
-              ticket.priority === 'medium' ? 'bg-blue-100 text-blue-800 border border-blue-200' :
-              'bg-green-100 text-green-800 border border-green-200'
-            }`}>
-              {ticket.priority?.toUpperCase()}
-            </span>
-          </div>
-        </div>
-        
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm text-gray-600">
-          <div className="flex items-center gap-2">
-            <span className="font-medium min-w-[100px]">Assigned To:</span>
-            <span className="text-gray-900">{ticket.assignedTo?.name || "Unassigned"}</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="font-medium min-w-[100px]">Customer Email:</span>
-            <span className="text-gray-900 truncate">{ticket.email}</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="font-medium min-w-[100px]">Created:</span>
-            <span className="text-gray-900">{new Date(ticket.createdAt).toLocaleString()}</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="font-medium min-w-[100px]">Client:</span>
-            <span className="text-gray-900">{ticket.client?.name || "N/A"}</span>
-          </div>
-        </div>
-      </div>
-
-      {/* Description */}
-      <div className="bg-white rounded-lg border border-gray-200 p-4 sm:p-6 shadow-sm">
-        <h2 className="font-medium text-gray-900 mb-3 flex items-center gap-2">
-          <MessageSquare className="h-4 w-4" />
-          Description
-        </h2>
-        <div className="bg-gray-50 p-4 rounded-lg">
-          <p className="text-gray-700 whitespace-pre-wrap leading-relaxed">{ticket.detail}</p>
-        </div>
-      </div>
-
-      {/* Action Buttons */}
-      <div className="flex flex-wrap gap-3 items-center">
-        <button
-          onClick={handleStatusUpdate}
-          disabled={updating}
-          className={`px-4 py-2 rounded-md text-white flex items-center transition-colors ${
-            ticket.isComplete
-              ? "bg-gray-600 hover:bg-gray-700"
-              : "bg-green-600 hover:bg-green-700"
-          } disabled:opacity-50 disabled:cursor-not-allowed`}
-        >
-          {updating ? (
-            <>
-              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-              Updating...
-            </>
-          ) : (
-            <>
-              <Check className="h-4 w-4 mr-2" />
-              {ticket.isComplete ? "Reopen Ticket" : "Complete Ticket"}
-            </>
-          )}
-        </button>
-        
-        <div className="text-xs text-gray-500 bg-gray-100 px-3 py-1 rounded-full">
-          {comments.length} comment{comments.length !== 1 ? 's' : ''}
-          {ticket.isComplete && " (Closed)"}
-        </div>
-      </div>
-
-      {/* Comments Section */}
-      <div className="bg-white rounded-lg border border-gray-200 overflow-hidden shadow-sm">
-        <div className="p-4 sm:p-6 border-b border-gray-200 bg-gray-50">
-          <h2 className="font-medium text-gray-900 flex items-center gap-2">
-            <Mail className="h-4 w-4" />
-            Conversation
-          </h2>
-          <p className="text-sm text-gray-500 mt-1">
-            Customer email replies appear with purple background. Your messages appear in green.
-          </p>
-        </div>
-        
-        <div
-          ref={chatRef}
-          className="h-[500px] overflow-y-auto p-4 sm:p-6 space-y-6"
-        >
-          {/* Original Ticket Description as first comment */}
-          <div className="flex gap-3">
-            <div className="flex-shrink-0">
-              <div className="w-10 h-10 rounded-full bg-purple-100 flex items-center justify-center">
-                <span className="text-sm font-medium text-purple-800">
-                  {ticket.email?.[0]?.toUpperCase() || "C"}
-                </span>
-              </div>
+    <div className="mx-auto max-w-7xl space-y-5 px-4 py-4">
+      <div className="space-y-4 bg-white px-5 py-5">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-3 text-sm text-slate-500">
+              <button
+                onClick={() => navigate(-1)}
+                className="inline-flex items-center gap-2 text-slate-600 transition-colors hover:text-slate-900"
+              >
+                <ArrowLeft className="h-4 w-4" />
+                Back to Tickets
+              </button>
+              <span className="font-mono text-slate-400">#{ticket.number}</span>
             </div>
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 mb-1 flex-wrap">
-                <span className="font-medium text-sm text-gray-900">
-                  {ticket.email?.split('@')[0] || "Customer"}
-                </span>
-                <span className="px-2 py-0.5 bg-purple-100 text-purple-700 text-xs rounded-full flex items-center gap-1">
-                  <Mail className="h-3 w-3" />
-                  Ticket Creator (Email)
-                </span>
-                <span className="text-xs text-gray-500">
-                  {new Date(ticket.createdAt).toLocaleString()}
-                </span>
-              </div>
-              <div className="mt-2 p-4 bg-purple-50 border-l-4 border-purple-400 rounded-r-lg">
-                <p className="text-gray-800 whitespace-pre-wrap leading-relaxed">{ticket.detail}</p>
-              </div>
+            <h1 className="mt-2 text-2xl font-semibold text-slate-950">
+              {ticket.title}
+            </h1>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <span className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold ${
+                ticket.isComplete
+                  ? "bg-emerald-50 text-emerald-700"
+                  : "bg-amber-50 text-amber-700"
+              }`}>
+                {ticket.isComplete ? "Closed" : "Open"}
+              </span>
+              <span className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold ${
+                ticket.priority === "high"
+                  ? "bg-red-50 text-red-700"
+                  : ticket.priority === "medium"
+                    ? "bg-blue-50 text-blue-700"
+                    : "bg-slate-100 text-slate-700"
+              }`}>
+                {(ticket.priority || "low").toUpperCase()}
+              </span>
+              <span className="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">
+                Assigned: {ticket.assignedTo?.name || "Unassigned"}
+              </span>
             </div>
           </div>
-          
-          {/* Comments List */}
-          {comments.length === 0 ? (
-            <div className="text-center py-12">
-              <Mail className="h-12 w-12 text-gray-300 mx-auto mb-3" />
-              <p className="text-gray-500">No comments yet.</p>
-              <p className="text-sm text-gray-400 mt-1">Be the first to comment!</p>
-            </div>
-          ) : (
-            comments.map((comment) => {
-              const isEmail = isEmailReply(comment);
-              const isOptimistic = comment.isOptimistic;
-              const senderName = getSenderName(comment);
-              const role = getCommentRole(comment);
-              const avatarClass = getAvatarColor(comment);
-              const messageClass = getMessageColor(comment);
-              const initials = getInitials(comment);
-              const commentKey = `${comment._id}-${comment.createdAt}`;
 
-              return (
-                <div key={commentKey} className="flex gap-3 animate-fadeIn">
-                  <div className="flex-shrink-0">
-                    <div className={`w-10 h-10 rounded-full flex items-center justify-center ${avatarClass}`}>
-                      <span className="text-sm font-medium">
-                        {initials}
-                      </span>
-                    </div>
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-1 flex-wrap">
-                      <span className="font-medium text-sm text-gray-900">
-                        {senderName}
-                      </span>
-                      <span className={`px-2 py-0.5 text-xs rounded-full flex items-center gap-1 ${
-                        isOptimistic
-                          ? "bg-gray-100 text-gray-700"
-                          : isEmail 
-                            ? "bg-purple-100 text-purple-700" 
-                            : comment.userId?._id === user?._id 
-                              ? "bg-green-100 text-green-700" 
-                              : "bg-blue-100 text-blue-700"
-                      }`}>
-                        {isOptimistic ? (
-                          <Loader2 className="h-3 w-3 animate-spin" />
-                        ) : isEmail ? (
-                          <Mail className="h-3 w-3" />
-                        ) : (
-                          <User className="h-3 w-3" />
-                        )}
-                        {role}
-                      </span>
-                      <span className="text-xs text-gray-500">
-                        {new Date(comment.createdAt).toLocaleString()}
-                      </span>
-                    </div>
-                    <div className={`mt-2 p-4 rounded-r-lg ${messageClass}`}>
-                      <p className="text-gray-800 whitespace-pre-wrap leading-relaxed">
-                        {comment.text}
-                        {isOptimistic && (
-                          <span className="inline-block ml-2">
-                            <Loader2 className="h-3 w-3 animate-spin text-gray-400" />
-                          </span>
-                        )}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              );
-            })
-          )}
-        </div>
-        
-        {/* Add Comment Form */}
-        <div className="p-4 sm:p-6 border-t border-gray-200 bg-gray-50">
-          <div className="mb-3 flex items-center gap-2">
-            <MessageSquare className="h-4 w-4 text-gray-500" />
-            <div className="text-sm text-gray-600">
-              Your reply will be emailed to: <strong className="text-indigo-700 font-semibold">{ticket.email}</strong>
-            </div>
-          </div>
-          <textarea
-            value={newComment}
-            onChange={(e) => setNewComment(e.target.value)}
-            placeholder="Write your reply... (Customer will receive this via email)"
-            className="w-full p-4 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent resize-none"
-            rows="4"
-            disabled={postingComment || ticket.isComplete}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                if (!postingComment && !ticket.isComplete) {
-                  handleAddComment();
-                }
-              }
-            }}
-          />
-          <div className="flex justify-between items-center mt-4">
-            <div className="text-sm text-gray-500 flex items-center gap-2">
-              <span>Shift + Enter for new line</span>
-              {ticket.isComplete && (
-                <span className="text-amber-600 font-medium">
-                  (Ticket is closed - cannot add new comments)
-                </span>
-              )}
-            </div>
+          <div className="flex flex-wrap items-center gap-2">
             <button
-              onClick={handleAddComment}
-              disabled={!newComment.trim() || postingComment || ticket.isComplete}
-              className="px-5 py-2.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 transition-colors shadow-sm"
+              onClick={handleRefresh}
+              className="inline-flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-900"
+              title="Refresh"
+              disabled={loading}
             >
-              {postingComment ? (
-                <>
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  Sending...
-                </>
-              ) : (
-                <>
-                  <Send className="h-4 w-4" />
-                  Send Reply
-                </>
-              )}
+              <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+              Refresh
+            </button>
+            <button
+              onClick={handleCopyLink}
+              className="inline-flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-900"
+              title="Copy link"
+            >
+              <Copy className="h-4 w-4" />
+              Copy Link
+            </button>
+            <button
+              onClick={handleStatusUpdate}
+              disabled={updating}
+              className={`inline-flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium text-white transition-colors ${
+                ticket.isComplete
+                  ? "bg-slate-700 hover:bg-slate-800"
+                  : "bg-emerald-600 hover:bg-emerald-700"
+              } disabled:opacity-50`}
+            >
+              {updating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+              {ticket.isComplete ? "Reopen" : "Close Ticket"}
             </button>
           </div>
         </div>
+
+        <div className="flex flex-wrap items-center gap-5 border-b border-slate-200">
+          {["activity", "details", "history"].map((tab) => (
+            <button
+              key={tab}
+              type="button"
+              onClick={() => setActiveTab(tab)}
+              className={`border-b-2 px-1 pb-3 pt-1 text-sm font-medium capitalize transition-colors ${
+                activeTab === tab
+                  ? "border-slate-900 text-slate-900"
+                  : "border-transparent text-slate-500 hover:text-slate-900"
+              }`}
+            >
+              {tab}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
+        <section className="min-w-0 bg-white px-5 py-5">
+          {activeTab === "activity" ? (
+            <>
+              <div className="mb-4 flex items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-lg font-semibold text-slate-950">Activity</h2>
+                  <p className="mt-1 text-sm text-slate-500">
+                    Customer conversation and agent replies.
+                  </p>
+                </div>
+                <div className="text-sm text-slate-500">
+                  {comments.length} comment{comments.length !== 1 ? "s" : ""}
+                </div>
+              </div>
+
+              <div
+                ref={chatRef}
+                className="space-y-5 overflow-y-auto pr-1"
+                style={{ maxHeight: "32rem" }}
+              >
+          {/* Original Ticket Description as first comment */}
+                <div className="flex gap-3">
+                  <div className="flex-shrink-0">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-100">
+                      <span className="text-sm font-medium text-slate-700">
+                  {ticket.email?.[0]?.toUpperCase() || "C"}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-sm font-semibold text-slate-900">
+                        {ticket.email?.split('@')[0] || "Customer"}
+                      </span>
+                      <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600">
+                        Ticket Creator
+                      </span>
+                      <span className="text-xs text-slate-400">
+                        {new Date(ticket.createdAt).toLocaleString()}
+                      </span>
+                    </div>
+                    <div className="mt-3 rounded-md bg-slate-50 px-4 py-4 text-sm leading-6 text-slate-700">
+                      {ticket.detail}
+                    </div>
+                  </div>
+                </div>
+
+                {comments.length === 0 ? (
+                  <div className="py-12 text-center">
+                    <Mail className="mx-auto mb-3 h-12 w-12 text-slate-300" />
+                    <p className="text-slate-500">No activity yet.</p>
+                  </div>
+                ) : (
+                  comments.map((comment) => {
+                    const isEmail = isEmailReply(comment);
+                    const isOptimistic = comment.isOptimistic;
+                    const senderName = getSenderName(comment);
+                    const role = getCommentRole(comment);
+                    const avatarClass = getAvatarColor(comment);
+                    const messageClass = getMessageColor(comment);
+                    const initials = getInitials(comment);
+                    const commentKey = `${comment._id}-${comment.createdAt}`;
+
+                    return (
+                      <div key={commentKey} className="flex gap-3">
+                        <div className="flex-shrink-0">
+                          <div className={`flex h-10 w-10 items-center justify-center rounded-full ${avatarClass}`}>
+                            <span className="text-sm font-medium">{initials}</span>
+                          </div>
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-sm font-semibold text-slate-900">
+                              {senderName}
+                            </span>
+                            <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                              isOptimistic
+                                ? "bg-slate-100 text-slate-600"
+                                : isEmail
+                                  ? "bg-purple-50 text-purple-700"
+                                  : comment.userId?._id === user?._id
+                                    ? "bg-emerald-50 text-emerald-700"
+                                    : "bg-blue-50 text-blue-700"
+                            }`}>
+                              {role}
+                            </span>
+                            <span className="text-xs text-slate-400">
+                              {new Date(comment.createdAt).toLocaleString()}
+                            </span>
+                          </div>
+                          <div className={`mt-3 rounded-md px-4 py-4 text-sm leading-6 text-slate-700 ${messageClass}`}>
+                            <p className="whitespace-pre-wrap">
+                              {comment.text}
+                              {isOptimistic ? (
+                                <span className="ml-2 inline-block">
+                                  <Loader2 className="h-3 w-3 animate-spin text-slate-400" />
+                                </span>
+                              ) : null}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+
+              <div className="mt-6 space-y-3">
+                <div className="text-sm text-slate-500">
+                  Reply will be sent to <span className="font-medium text-slate-900">{ticket.email}</span>
+                </div>
+                <textarea
+                  value={newComment}
+                  onChange={(e) => setNewComment(e.target.value)}
+                  placeholder="Write your reply"
+                  className="min-h-[180px] w-full resize-none rounded-md bg-slate-50 px-4 py-3 text-sm text-slate-700 outline-none ring-1 ring-slate-200 focus:ring-2 focus:ring-slate-900"
+                  disabled={postingComment || ticket.isComplete}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      if (!postingComment && !ticket.isComplete) {
+                        handleAddComment();
+                      }
+                    }
+                  }}
+                />
+                <div className="flex items-center justify-between gap-3">
+                  <div className="text-xs text-slate-500">
+                    Shift + Enter for new line
+                    {ticket.isComplete ? " • Ticket is closed" : ""}
+                  </div>
+                  <button
+                    onClick={handleAddComment}
+                    disabled={!newComment.trim() || postingComment || ticket.isComplete}
+                    className="inline-flex items-center gap-2 rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-slate-800 disabled:opacity-50"
+                  >
+                    {postingComment ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                    Send Reply
+                  </button>
+                </div>
+              </div>
+            </>
+          ) : (
+            <div className="space-y-5">
+              <h2 className="text-lg font-semibold text-slate-950">Details</h2>
+              <div className="grid gap-5 md:grid-cols-2">
+                <div className="space-y-2">
+                  <div className="text-xs font-medium uppercase tracking-[0.16em] text-slate-500">Customer</div>
+                  <div className="text-sm text-slate-900">{ticket.email || "N/A"}</div>
+                </div>
+                <div className="space-y-2">
+                  <div className="text-xs font-medium uppercase tracking-[0.16em] text-slate-500">Client</div>
+                  <div className="text-sm text-slate-900">{ticket.client?.name || "N/A"}</div>
+                </div>
+                <div className="space-y-2">
+                  <div className="text-xs font-medium uppercase tracking-[0.16em] text-slate-500">Created</div>
+                  <div className="text-sm text-slate-900">{new Date(ticket.createdAt).toLocaleString()}</div>
+                </div>
+                <div className="space-y-2">
+                  <div className="text-xs font-medium uppercase tracking-[0.16em] text-slate-500">Updated</div>
+                  <div className="text-sm text-slate-900">{new Date(ticket.updatedAt || ticket.createdAt).toLocaleString()}</div>
+                </div>
+              </div>
+              <div className="space-y-2">
+                <div className="text-xs font-medium uppercase tracking-[0.16em] text-slate-500">Description</div>
+                <div className="rounded-md bg-slate-50 px-4 py-4 text-sm leading-6 text-slate-700">
+                  {ticket.detail}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {activeTab === "history" ? (
+            <div className="space-y-4">
+              <h2 className="text-lg font-semibold text-slate-950">History</h2>
+              <div className="space-y-4">
+                <div className="rounded-md bg-slate-50 px-4 py-4">
+                  <div className="text-sm font-medium text-slate-900">Ticket created</div>
+                  <div className="mt-1 text-sm text-slate-600">{new Date(ticket.createdAt).toLocaleString()}</div>
+                </div>
+                <div className="rounded-md bg-slate-50 px-4 py-4">
+                  <div className="text-sm font-medium text-slate-900">Status</div>
+                  <div className="mt-1 text-sm text-slate-600">{ticket.isComplete ? "Closed" : "Open"}</div>
+                </div>
+                <div className="rounded-md bg-slate-50 px-4 py-4">
+                  <div className="text-sm font-medium text-slate-900">Latest activity count</div>
+                  <div className="mt-1 text-sm text-slate-600">{comments.length} recorded comment{comments.length !== 1 ? "s" : ""}</div>
+                </div>
+              </div>
+            </div>
+          ) : null}
+        </section>
+
+        <aside className="space-y-5 bg-white px-5 py-5">
+          <div className="space-y-4">
+            <h2 className="text-lg font-semibold text-slate-950">Ticket Metadata</h2>
+            <div className="space-y-3">
+              <div>
+                <div className="text-xs font-medium uppercase tracking-[0.16em] text-slate-500">Ticket ID</div>
+                <div className="mt-1 text-sm font-medium text-slate-900">#{ticket.number}</div>
+              </div>
+              <div>
+                <div className="text-xs font-medium uppercase tracking-[0.16em] text-slate-500">Assigned User</div>
+                <div className="mt-1 text-sm text-slate-900">{ticket.assignedTo?.name || "Unassigned"}</div>
+              </div>
+              <div>
+                <div className="text-xs font-medium uppercase tracking-[0.16em] text-slate-500">Priority</div>
+                <div className="mt-1 text-sm text-slate-900">{(ticket.priority || "low").toUpperCase()}</div>
+              </div>
+              <div>
+                <div className="text-xs font-medium uppercase tracking-[0.16em] text-slate-500">Status</div>
+                <div className="mt-1 text-sm text-slate-900">{ticket.isComplete ? "Closed" : "Open"}</div>
+              </div>
+              <div>
+                <div className="text-xs font-medium uppercase tracking-[0.16em] text-slate-500">Customer Email</div>
+                <div className="mt-1 break-all text-sm text-slate-900">{ticket.email}</div>
+              </div>
+            </div>
+          </div>
+        </aside>
       </div>
     </div>
   );

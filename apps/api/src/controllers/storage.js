@@ -3,6 +3,7 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const TicketFile = require('../models/TicketFile');
+const { requirePermission } = require('../lib/roles');
 
 const router = express.Router();
 
@@ -45,6 +46,7 @@ const upload = multer({
 // Upload single file for ticket
 router.post(
   "/ticket/:id/upload/single",
+  requirePermission(['issue::update']),
   upload.single("file"),
   async (req, res) => {
     try {
@@ -89,6 +91,7 @@ router.post(
 // Get all ticket attachments
 router.get(
   "/ticket/:id/files",
+  requirePermission(['issue::read']),
   async (req, res) => {
     try {
       const { id } = req.params;
@@ -115,6 +118,7 @@ router.get(
 // Delete an attachment
 router.delete(
   "/file/:fileId/delete",
+  requirePermission(['issue::update']),
   async (req, res) => {
     try {
       const { fileId } = req.params;
@@ -153,6 +157,7 @@ router.delete(
 // Download an attachment
 router.get(
   "/file/:fileId/download",
+  requirePermission(['issue::read']),
   async (req, res) => {
     try {
       const { fileId } = req.params;
@@ -204,6 +209,7 @@ router.get(
 // Get file info (without downloading)
 router.get(
   "/file/:fileId/info",
+  requirePermission(['issue::read']),
   async (req, res) => {
     try {
       const { fileId } = req.params;

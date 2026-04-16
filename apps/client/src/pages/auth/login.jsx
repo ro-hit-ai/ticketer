@@ -4,7 +4,7 @@ import { useNavigate } from "react-router-dom";
 import Cookies from "js-cookie";
 import { toast } from "react-toastify";
 import { useUser } from "../../store/session.jsx";
-import {apiUrl} from "../../utils/api";  // 👈 import helper
+import { apiUrl } from "../../utils/api";
 
 export default function Login() {
   const [email, setEmail] = useState("");
@@ -12,16 +12,33 @@ export default function Login() {
   const [status, setStatus] = useState("idle");
   const [url, setUrl] = useState("");
 
-  // const { user, setUser, fetchUserProfile } = useUser();
-  const { user, setUser, refreshSession } = useUser();
+  const { user, setUser } = useUser();
   const navigate = useNavigate();
 
   const isSubmitting = useRef(false);
 
-  // OIDC check
+  function getRedirectTarget(nextUser) {
+    if (nextUser?.isAdmin) return "/admin";
+    if (nextUser?.isAgent) return "/agents/tickets?status=open";
+    return "/portal";
+  }
+
+  function normalizeUser(rawUser) {
+    if (!rawUser) return null;
+
+    return {
+      ...rawUser,
+      _id: rawUser.id || rawUser._id,
+      id: rawUser.id || rawUser._id,
+      isAdmin: rawUser.isAdmin === true,
+      isAgent: rawUser.isAgent === true,
+      imap_enabled: rawUser.imap_enabled === true,
+    };
+  }
+
   async function oidcLogin() {
     try {
-       const res = await fetch(apiUrl("/v1/auth/check"), {
+      const res = await fetch(apiUrl("/v1/auth/check"), {
         method: "GET",
         headers: { "Content-Type": "application/json" },
       });
@@ -63,17 +80,20 @@ export default function Login() {
       }
 
       const data = await res.json();
-      if (data.success && data.token && data.user) {
+      if (data.token && data.user) {
+        const normalizedUser = normalizeUser(data.user);
+
         Cookies.set("session", data.token, {
-          secure: import.meta.env.MODE !== "development",
-          sameSite: "strict",
+          secure: window.location.protocol === "https:",
+          sameSite: "lax",
           path: "/",
           expires: 7,
         });
+        localStorage.setItem("session", data.token);
 
-        setUser(data.user);
-        // await fetchUserProfile(true); // force refresh
-        await refreshSession();
+        setUser(normalizedUser);
+        localStorage.setItem("user", JSON.stringify(normalizedUser));
+        navigate(getRedirectTarget(normalizedUser), { replace: true });
         toast.success("Login successful! Welcome back.");
       } else {
         toast.error(data.message || "Invalid login");
@@ -86,12 +106,14 @@ export default function Login() {
     }
   }
 
-  // Run OIDC check if no user
-useEffect(() => {
-  if (user) {
-    navigate("/portal", { replace: true });
-  }
-}, [user, navigate]);
+  useEffect(() => {
+    if (user) {
+      navigate(getRedirectTarget(user), { replace: true });
+      return;
+    }
+
+    oidcLogin();
+  }, [user, navigate]);
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col justify-center py-6 px-4 sm:px-6 lg:px-8">
