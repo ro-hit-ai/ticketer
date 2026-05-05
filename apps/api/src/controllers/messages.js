@@ -8,6 +8,7 @@ const Ticket = require('../models/Ticket');
 const EmailQueue = require('../models/EmailQueue');
 const User = require('../models/User');
 const { MailService } = require('../lib/services/smtp.service');
+const { OutboundEmailQueueService } = require('../lib/services/outboundEmailQueue.service');
 const emailTemplates = require('../utils/emailTemplates');
 const { fetchAssignedApplications } = require('../lib/services/phpAccessScope.service');
 
@@ -63,12 +64,47 @@ function buildHtmlFromBody(body) {
   return `<div>${escaped}</div>`;
 }
 
+function isPrivilegedThreadAdmin(user) {
+  if (!user) return false;
+  if (user.isAdmin === true) return true;
+
+  if (Array.isArray(user.permissions) && user.permissions.includes('*')) {
+    return true;
+  }
+
+  if (Array.isArray(user.roles)) {
+    return user.roles.some((role) => {
+      const roleName =
+        typeof role === 'string'
+          ? role
+          : (typeof role?.name === 'string' ? role.name : '');
+      return roleName.trim().toLowerCase() === 'admin';
+    });
+  }
+
+  return false;
+}
+
+function hasThreadOwnershipAccess(req, thread) {
+  const currentUserId = String(req?.user?._id || req?.user?.id || '').trim();
+  if (!currentUserId || !thread) return false;
+
+  const ownerCandidates = [
+    String(thread.lastAssignedUserId || '').trim(),
+    String(thread.workflowSnapshot?.currentUserId || '').trim(),
+    String(thread.createdBy?._id || thread.createdBy || '').trim(),
+    String(thread.claimedBy?._id || thread.claimedBy || '').trim(),
+  ].filter(Boolean);
+
+  return ownerCandidates.includes(currentUserId);
+}
+
 async function ensureThreadAccess(req, thread) {
   if (!thread) {
     return { allowed: false, statusCode: 404, message: 'Thread not found' };
   }
 
-  if (req?.user?.isAdmin) {
+  if (isPrivilegedThreadAdmin(req?.user)) {
     return { allowed: true, scope: null };
   }
 
@@ -80,6 +116,10 @@ async function ensureThreadAccess(req, thread) {
   // Fail open if PHP scope is unavailable (missing cookie / PHP down). Threads.js uses the same behavior.
   if (!scope.applicationIds.length) {
     console.warn('No scope → fallback allow');
+    return { allowed: true, scope: null };
+  }
+
+  if (hasThreadOwnershipAccess(req, thread)) {
     return { allowed: true, scope: null };
   }
 
@@ -346,6 +386,7 @@ router.post('/', requirePermission([]), async (req, res) => {
     let resolvedBodyHtml = req.body.bodyHtml || template.html || null;
     let emailMessageRecord = null;
     let shouldSendEmail = channel === 'email' && direction !== 'inbound';
+    let outboundQueueJob = null;
 
     if (channel === 'email' && direction === 'internal' && resolvedRecipients.to.length === 0) {
       return res.status(400).json({
@@ -373,41 +414,29 @@ router.post('/', requirePermission([]), async (req, res) => {
           }
         : {};
 
-      const smtpResult = await MailService.sendEmail({
-        to: resolvedRecipients.to.join(','),
-        cc: resolvedRecipients.cc,
-        bcc: resolvedRecipients.bcc,
-        subject: subject || '(No subject)',
-        text: messageBody,
-        html: htmlBody,
-        queue,
-        from: formatFromAddress(approvedSender.name, approvedSender.email),
-        headers: outboundHeaders,
-      });
-
-      emailMessageRecord = await MailService.persistSentEmail({
-        queue,
+      outboundQueueJob = {
+        queueId: queue._id,
+        mailboxId: resolvedMailboxId || mailbox?._id || null,
         threadId: thread._id,
-        sourceCaseId: thread.sourceCaseId,
-        direction: direction === 'internal' ? 'outbound' : direction,
+        sourceCaseId: thread.sourceCaseId || null,
+        senderName: approvedSender.name || null,
+        senderEmail: approvedSender.email,
         to: resolvedRecipients.to,
         cc: resolvedRecipients.cc,
         bcc: resolvedRecipients.bcc,
         subject: subject || '(No subject)',
         text: messageBody,
         html: htmlBody,
-        messageId: smtpResult.messageId,
-        from: approvedSender.email,
         inReplyTo: req.body.inReplyTo || null,
         references: Array.isArray(req.body.references) ? req.body.references : [],
+        headers: outboundHeaders,
         sentByUserId: sender.id || sender._id || null,
         sentByRole,
         recipientUserId,
-        headers: outboundHeaders,
-      });
+        metadata: {},
+      };
 
-      resolvedExternalMessageId = smtpResult.messageId || resolvedExternalMessageId;
-      resolvedStatus = req.body.status || 'sent';
+      resolvedStatus = req.body.status || 'queued';
       resolvedBodyHtml = htmlBody;
       resolvedMailboxId = resolvedMailboxId || mailbox?._id || null;
     }
@@ -476,6 +505,36 @@ router.post('/', requirePermission([]), async (req, res) => {
     });
 
     const populatedMessage = await Message.findById(message._id).populate(messagePopulate);
+
+    if (outboundQueueJob) {
+      outboundQueueJob.metadata = {
+        ...baseMetadata,
+        messageId: message._id,
+      };
+
+      const job = await OutboundEmailQueueService.enqueue(outboundQueueJob, {
+        idempotencyKey: externalMessageId || null,
+        actor: {
+          actorType: 'user',
+          actorId: String(req.user?._id || ''),
+          actorEmail: req.user?.email || null,
+          actorName: req.user?.name || null,
+        },
+        requestId: req.headers['x-request-id'] || null,
+      });
+      await Message.findByIdAndUpdate(message._id, {
+        $set: {
+          metadata: {
+            ...message.metadata,
+            outboundJobId: job._id,
+          },
+        },
+      });
+      populatedMessage.metadata = {
+        ...(populatedMessage.metadata || {}),
+        outboundJobId: job._id,
+      };
+    }
 
     return res.status(201).json({
       success: true,

@@ -1,31 +1,39 @@
-import React, { useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import React, { useEffect, useMemo, useState } from "react";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "react-toastify";
 import { useUser } from "../../store/session";
+import { getThreads } from "../../services/communication.service";
 import { getThreadTitle } from "../../utils/threadTitle";
 
 export default function AdminThreads() {
   const { fetchWithAuth } = useUser();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [threads, setThreads] = useState([]);
   const [filter, setFilter] = useState("");
-  const [selectedThreadId, setSelectedThreadId] = useState("");
   const [loading, setLoading] = useState(true);
+  const selectedThreadId = searchParams.get("threadId") || "";
 
   const loadThreads = async (sourceCaseId = "") => {
     try {
       setLoading(true);
-      const query = sourceCaseId.trim()
-        ? `/v1/threads?sourceCaseId=${encodeURIComponent(sourceCaseId.trim())}`
-        : "/v1/threads";
-      const response = await fetchWithAuth(query, { method: "GET" });
-      const data = await response.json();
+      const nextThreads = await getThreads(fetchWithAuth, {
+        sourceCaseId: sourceCaseId.trim() || undefined,
+        includeMonitoring: true,
+      });
+      setThreads(nextThreads);
 
-      if (!response.ok || data.success === false) {
-        throw new Error(data.message || "Failed to fetch threads");
+      if (nextThreads.length === 0) {
+        if (selectedThreadId) {
+          setSearchParams({});
+        }
+        return;
       }
 
-      setThreads(Array.isArray(data.threads) ? data.threads : []);
+      const selectedExists = nextThreads.some((thread) => thread._id === selectedThreadId);
+      if (!selectedThreadId || !selectedExists) {
+        setSearchParams({ threadId: nextThreads[0]._id });
+      }
     } catch (error) {
       toast.error(error.message || "Failed to fetch threads");
     } finally {
@@ -37,19 +45,27 @@ export default function AdminThreads() {
     loadThreads();
   }, []);
 
+  useEffect(() => {
+    if (loading || threads.length === 0 || !selectedThreadId) return;
+    const selectedExists = threads.some((thread) => thread._id === selectedThreadId);
+    if (!selectedExists) {
+      setSearchParams({ threadId: threads[0]._id });
+    }
+  }, [loading, threads, selectedThreadId]);
+
   const handleSearch = async (event) => {
     event.preventDefault();
     await loadThreads(filter);
   };
 
-  const filteredThreads = threads.filter((thread) => {
+  const filteredThreads = useMemo(() => threads.filter((thread) => {
     const query = filter.trim().toLowerCase();
     if (!query) return true;
 
     return [thread.subject, thread.sourceCaseId, thread.mailboxId?.name, thread.status]
       .filter(Boolean)
       .some((value) => String(value).toLowerCase().includes(query));
-  });
+  }), [threads, filter]);
 
   const selectedThread =
     filteredThreads.find((thread) => thread._id === selectedThreadId) ||
@@ -65,7 +81,7 @@ export default function AdminThreads() {
         </p>
       </div>
 
-      <div className="grid gap-6 xl:grid-cols-[360px_minmax(0,1fr)]">
+      <div className="grid gap-4 xl:grid-cols-[360px_minmax(0,1fr)]">
         <div className="space-y-6">
           <div className="rounded-lg border bg-card p-4 text-sm text-muted-foreground">
             Admin view only. Messaging handled by validators.
@@ -84,10 +100,7 @@ export default function AdminThreads() {
               value={selectedThreadId}
               onChange={(event) => {
                 const nextThreadId = event.target.value;
-                setSelectedThreadId(nextThreadId);
-                if (nextThreadId) {
-                  navigate(`/admin/messages?threadId=${nextThreadId}`);
-                }
+                setSearchParams(nextThreadId ? { threadId: nextThreadId } : {});
               }}
             >
               <option value="">Select from loaded threads</option>
@@ -102,6 +115,13 @@ export default function AdminThreads() {
               className="rounded-md border px-4 py-2 text-sm font-medium"
             >
               Apply Filter
+            </button>
+            <button
+              type="button"
+              onClick={() => loadThreads(filter)}
+              className="rounded-md border px-4 py-2 text-sm font-medium"
+            >
+              Refresh
             </button>
           </form>
 
@@ -127,7 +147,7 @@ export default function AdminThreads() {
         </div>
 
         <div className="rounded-lg border bg-card">
-          <div className="border-b px-4 py-3">
+          <div className="sticky top-0 z-10 border-b bg-card px-4 py-3">
             <h2 className="text-lg font-medium">Thread List</h2>
           </div>
 
@@ -138,7 +158,7 @@ export default function AdminThreads() {
           ) : filteredThreads.length === 0 ? (
             <div className="p-4 text-sm text-muted-foreground">No threads match your filter.</div>
           ) : (
-            <div className="max-h-[720px] divide-y overflow-y-auto">
+            <div className="h-[calc(100vh-360px)] min-h-[460px] divide-y overflow-y-auto">
               {filteredThreads.map((thread) => (
                 <div
                   key={thread._id}
@@ -162,8 +182,7 @@ export default function AdminThreads() {
                     <button
                       type="button"
                       onClick={() => {
-                        setSelectedThreadId(thread._id);
-                        navigate(`/admin/messages?threadId=${thread._id}`);
+                        setSearchParams({ threadId: thread._id });
                       }}
                       className="rounded-md border px-3 py-1.5 text-sm"
                     >

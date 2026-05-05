@@ -13,7 +13,7 @@
     "migrate:email-body-text": "node scripts/migrate-emailmessage-body-text.js"
   },
   "devDependencies": {
-    "nodemon": "^3.1.10"
+    "nodemon": "^3.1.14"
   },
   "dependencies": {
     "@azure/core-auth": "^1.10.0",
@@ -45,7 +45,6 @@
     "openid-client": "^5.7.1",
     "pino": "^9.5.0",
     "posthog-node": "^3.1.3",
-    "redis": "^5.8.2",
     "samlify": "^2.8.11",
     "simple-oauth2": "^5.1.0",
     "xml-encryption": "^3.0.2"

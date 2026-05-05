@@ -298,10 +298,10 @@ router.get(
       }
 
       const timeTracking = await TimeTracking.find({ ticketId: id })
-        .populate('user', 'name');
+        .populate('userId', 'name');
 
       const comments = await Comment.find({ ticketId: id })
-        .populate('user', 'name');
+        .populate('userId', 'name');
 
       const files = []; // Assuming you have a TicketFile model
 

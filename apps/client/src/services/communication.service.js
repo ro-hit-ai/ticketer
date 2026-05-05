@@ -9,6 +9,14 @@ export async function getThreads(fetchWithAuth, params = {}) {
     search.set("mailboxId", params.mailboxId);
   }
 
+  if (params.includeMonitoring !== undefined && params.includeMonitoring !== null) {
+    search.set("includeMonitoring", String(Boolean(params.includeMonitoring)));
+  }
+
+  if (params.status) {
+    search.set("status", params.status);
+  }
+
   const query = search.toString();
   const response = await fetchWithAuth(`/v1/threads${query ? `?${query}` : ""}`, {
     method: "GET",

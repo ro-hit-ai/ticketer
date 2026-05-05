@@ -35,8 +35,51 @@ function normalizeUserId(value) {
   return value ? String(value).trim() : null;
 }
 
+function toObjectIdOrNull(value) {
+  const normalized = normalizeUserId(value);
+  if (!normalized || !mongoose.Types.ObjectId.isValid(normalized)) {
+    return null;
+  }
+  return new mongoose.Types.ObjectId(normalized);
+}
+
 function normalizeEmail(value) {
   return typeof value === 'string' ? value.trim().toLowerCase() : null;
+}
+
+function isPrivilegedThreadAdmin(user) {
+  if (!user) return false;
+  if (user.isAdmin === true) return true;
+
+  if (Array.isArray(user.permissions) && user.permissions.includes('*')) {
+    return true;
+  }
+
+  if (Array.isArray(user.roles)) {
+    return user.roles.some((role) => {
+      const roleName =
+        typeof role === 'string'
+          ? role
+          : (typeof role?.name === 'string' ? role.name : '');
+      return roleName.trim().toLowerCase() === 'admin';
+    });
+  }
+
+  return false;
+}
+
+function hasThreadOwnershipAccess(req, thread) {
+  const currentUserId = normalizeUserId(req?.user?._id || req?.user?.id);
+  if (!currentUserId || !thread) return false;
+
+  const ownerCandidates = [
+    normalizeUserId(thread.lastAssignedUserId),
+    normalizeUserId(thread.workflowSnapshot?.currentUserId),
+    normalizeUserId(thread.createdBy?._id || thread.createdBy),
+    normalizeUserId(thread.claimedBy?._id || thread.claimedBy),
+  ].filter(Boolean);
+
+  return ownerCandidates.includes(currentUserId);
 }
 
 async function getCachedAccessScope(req) {
@@ -51,28 +94,44 @@ async function getCachedAccessScope(req) {
 
 async function buildThreadAccessQuery(user, req) {
   if (!user) return {};
+  if (isPrivilegedThreadAdmin(user)) return {};
+
+  const normalizedUserId = normalizeUserId(user?._id || user?.id);
+  const ownershipObjectId = toObjectIdOrNull(normalizedUserId);
+  const ownershipConditions = normalizedUserId
+    ? [
+        { lastAssignedUserId: normalizedUserId },
+        { 'workflowSnapshot.currentUserId': normalizedUserId },
+        ...(ownershipObjectId ? [{ createdBy: ownershipObjectId }, { claimedBy: ownershipObjectId }] : []),
+      ]
+    : [];
 
   try {
     const scope = await fetchAssignedApplications(req);
 
     console.log("ACCESS SCOPE:", scope);
 
-    // ✅ If PHP returns valid applications
     if (scope?.applicationIds?.length) {
+      if (ownershipConditions.length > 0) {
+        return {
+          $or: [
+            { sourceCaseId: { $in: scope.applicationIds } },
+            ...ownershipConditions,
+          ],
+        };
+      }
+
       return {
         sourceCaseId: { $in: scope.applicationIds }
       };
     }
 
-    // ⚠️ FALLBACK (IMPORTANT)
-    console.warn("No scope found → fallback to ALL threads");
+    console.warn("No scope found -> fallback to ALL threads");
 
-    return {}; // show all threads instead of empty
+    return {};
 
   } catch (err) {
     console.error("Scope fetch failed:", err);
-
-    // ⚠️ FAIL SAFE
     return {};
   }
 }
@@ -86,7 +145,7 @@ async function ensureThreadAccess(req, thread) {
     };
   }
 
-  if (req?.user?.isAdmin) {
+  if (isPrivilegedThreadAdmin(req?.user)) {
     return { allowed: true };
   }
 
@@ -95,6 +154,10 @@ async function ensureThreadAccess(req, thread) {
   // ✅ IMPORTANT FIX
   if (!scope.applicationIds.length) {
     console.warn("No scope → fallback allow");
+    return { allowed: true };
+  }
+
+  if (hasThreadOwnershipAccess(req, thread)) {
     return { allowed: true };
   }
 
@@ -175,6 +238,23 @@ router.post('/', requirePermission([]), async (req, res) => {
     const normalizedSourceCaseId = normalizeSourceCaseId(sourceCaseId);
     const existing = await Thread.findOne({ sourceCaseId: normalizedSourceCaseId }).populate(threadPopulate);
     if (existing) {
+      const requesterId = normalizeUserId(req.user?._id || req.user?.id);
+      let shouldSaveExisting = false;
+
+      if (requesterId && !existing.lastAssignedUserId) {
+        existing.lastAssignedUserId = requesterId;
+        shouldSaveExisting = true;
+      }
+
+      if (requesterId && !existing.createdBy) {
+        existing.createdBy = requesterId;
+        shouldSaveExisting = true;
+      }
+
+      if (shouldSaveExisting) {
+        await existing.save();
+      }
+
       return res.json({
         success: true,
         created: false,
@@ -186,6 +266,7 @@ router.post('/', requirePermission([]), async (req, res) => {
       sourceCaseId: normalizedSourceCaseId,
       subject: `Verification – ${normalizedSourceCaseId}`,
       status: 'open',
+      createdBy: req.user?._id || req.user?.id || null,
       lastAssignedUserId: req.user?.id || req.user?._id || null,
     });
 
@@ -202,9 +283,23 @@ router.post('/', requirePermission([]), async (req, res) => {
         sourceCaseId: normalizeSourceCaseId(req.body.sourceCaseId),
       }).populate(threadPopulate);
 
-      if (thread && !thread.lastAssignedUserId) {
-        thread.lastAssignedUserId = normalizeUserId(req.user?._id || req.user?.id);
-        await thread.save();
+      if (thread) {
+        const requesterId = normalizeUserId(req.user?._id || req.user?.id);
+        let shouldSaveThread = false;
+
+        if (requesterId && !thread.lastAssignedUserId) {
+          thread.lastAssignedUserId = requesterId;
+          shouldSaveThread = true;
+        }
+
+        if (requesterId && !thread.createdBy) {
+          thread.createdBy = requesterId;
+          shouldSaveThread = true;
+        }
+
+        if (shouldSaveThread) {
+          await thread.save();
+        }
       }
 
       const access = await ensureThreadAccess(req, thread);
@@ -338,7 +433,7 @@ router.get('/source/:sourceCaseId/workflow', requirePermission([]), async (req, 
     const debugEnabled = req.query.debug === '1' || req.query.debug === 'true';
 
     // Enforce PHP assignment scope for non-admin users even if the thread doesn't exist yet.
-    if (!req.user?.isAdmin) {
+    if (!isPrivilegedThreadAdmin(req?.user)) {
       const scope = await getCachedAccessScope(req);
       if (scope.applicationIds.length > 0 && !scope.applicationIds.includes(sourceCaseId)) {
         return res.status(403).json({

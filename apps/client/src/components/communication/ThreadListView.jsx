@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { MessageSquare, Search } from "lucide-react";
 import { toast } from "react-toastify";
 import { useUser } from "../../store/session";
@@ -21,15 +21,26 @@ export default function ThreadListView({
 }) {
   const { fetchWithAuth } = useUser();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [threads, setThreads] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState("");
+  const [filter, setFilter] = useState(searchParams.get("q") || "");
   const [selectedThreadId, setSelectedThreadId] = useState("");
+  const [denseMode, setDenseMode] = useState(localStorage.getItem("layoutDensity") !== "comfortable");
+
+  useEffect(() => {
+    const onStorage = () => setDenseMode(localStorage.getItem("layoutDensity") !== "comfortable");
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
 
   const loadThreads = async (sourceCaseId = "") => {
     try {
       setLoading(true);
-      const nextThreads = await getThreads(fetchWithAuth, { sourceCaseId });
+      const nextThreads = await getThreads(fetchWithAuth, {
+        sourceCaseId,
+        includeMonitoring: true,
+      });
       setThreads(nextThreads);
     } catch (error) {
       toast.error(error.message || "Failed to fetch threads");
@@ -39,20 +50,18 @@ export default function ThreadListView({
   };
 
   useEffect(() => {
-    loadThreads();
+    loadThreads(searchParams.get("q") || "");
   }, []);
 
   useEffect(() => {
-    console.log("[ThreadListView] filter updated", {
-      filter,
-    });
-  }, [filter]);
+    const q = searchParams.get("q") || "";
+    setFilter(q);
+  }, [searchParams]);
 
   const handleSearch = async () => {
-    console.log("[ThreadListView] search submit", {
-      filter,
-    });
-    await loadThreads(filter.trim());
+    const nextQuery = filter.trim();
+    setSearchParams(nextQuery ? { q: nextQuery } : {});
+    await loadThreads(nextQuery);
   };
 
   const filteredThreads = threads.filter((thread) => {
@@ -77,8 +86,6 @@ export default function ThreadListView({
   const handleOpenOrCreate = async () => {
     const nextFilter = filter.trim();
 
-    console.log("SENDING sourceCaseId:", nextFilter);
-
     if (!nextFilter) {
       toast.error("Enter an application ID to open a thread");
       return;
@@ -102,23 +109,22 @@ export default function ThreadListView({
   };
 
   return (
-    <div className="space-y-6">
+    <div className={denseMode ? "space-y-4" : "space-y-6"}>
       <div>
-        <h1 className="text-2xl font-semibold text-slate-950">{title}</h1>
+        <h1 className={denseMode ? "text-xl font-semibold text-slate-950" : "text-2xl font-semibold text-slate-950"}>{title}</h1>
         {description ? (
           <p className="mt-1 text-sm text-slate-500">{description}</p>
         ) : null}
       </div>
 
-      <div className="flex gap-3">
+      <div className={denseMode ? "desk-v2-actionbar flex gap-2 rounded-lg p-1.5" : "flex gap-3"}>
         <label className="relative w-full max-w-md">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
           <input
             type="text"
-            className="w-full rounded-md border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm"
+            className={denseMode ? "desk-v2-input w-full border border-slate-200 bg-white py-1 pl-9 pr-3 text-xs" : "w-full rounded-md border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm"}
             value={filter || ""}
             onChange={(event) => {
-              console.log("[ThreadListView] typing", event.target.value);
               setFilter(event.target.value);
             }}
             onKeyDown={(event) => {
@@ -133,22 +139,22 @@ export default function ThreadListView({
         <button
           type="button"
           onClick={handleSearch}
-          className="rounded-md border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+          className={denseMode ? "desk-v2-btn border border-slate-200 bg-white text-xs font-medium text-slate-700 hover:bg-slate-50" : "rounded-md border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"}
         >
           Search
         </button>
         <button
           type="button"
           onClick={handleOpenOrCreate}
-          className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800"
+          className={denseMode ? "desk-v2-btn bg-slate-900 text-xs font-medium text-white hover:bg-slate-800" : "rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800"}
         >
           Open or Create
         </button>
       </div>
 
-      <div className="flex gap-3">
+      <div className={denseMode ? "flex gap-2" : "flex gap-3"}>
         <select
-          className="w-full max-w-md rounded-md border border-slate-200 bg-white px-3 py-2 text-sm"
+          className={denseMode ? "desk-v2-input w-full max-w-md border border-slate-200 bg-white px-3 py-1 text-xs" : "w-full max-w-md rounded-md border border-slate-200 bg-white px-3 py-2 text-sm"}
           value={selectedThreadId}
           onChange={(event) => {
             const nextThreadId = event.target.value;
@@ -168,7 +174,7 @@ export default function ThreadListView({
         <button
           type="button"
           onClick={handleOpenExisting}
-          className="rounded-md border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+          className={denseMode ? "desk-v2-btn border border-slate-200 bg-white text-xs font-medium text-slate-700 hover:bg-slate-50" : "rounded-md border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"}
         >
           Open Selected
         </button>
@@ -187,7 +193,7 @@ export default function ThreadListView({
               <Link
                 key={thread._id}
                 to={`${basePath}/messages?threadId=${thread._id}`}
-                className="block px-4 py-4 transition-colors hover:bg-slate-50"
+                className={denseMode ? "desk-v2-row block px-3 py-2.5 transition-colors hover:bg-slate-50" : "block px-4 py-4 transition-colors hover:bg-slate-50"}
               >
                 <div className="flex items-start justify-between gap-4">
                   <div className="min-w-0 flex-1">

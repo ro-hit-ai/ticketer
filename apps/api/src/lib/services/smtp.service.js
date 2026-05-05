@@ -58,6 +58,25 @@ function toPlainText(value) {
 }
 
 class MailService {
+  static assertDeliveryAccepted(info, recipients = []) {
+    const accepted = Array.isArray(info?.accepted) ? info.accepted : [];
+    const rejected = Array.isArray(info?.rejected) ? info.rejected : [];
+    const pending = Array.isArray(info?.pending) ? info.pending : [];
+    const recipientCount = Array.isArray(recipients)
+      ? recipients.length
+      : String(recipients || '')
+          .split(',')
+          .map((value) => value.trim())
+          .filter(Boolean).length;
+
+    // Nodemailer can resolve even when SMTP rejects recipients.
+    // Treat "nothing accepted" as a hard failure to avoid false 200s.
+    if (recipientCount > 0 && accepted.length === 0) {
+      const detail = `accepted=${accepted.length}, rejected=${rejected.length}, pending=${pending.length}`;
+      throw new Error(`SMTP accepted 0 recipients (${detail})`);
+    }
+  }
+
   static async getImapConfig(queue) {
     switch (queue.serviceType) {
       case 'gmail': {
@@ -88,7 +107,8 @@ class MailService {
   static async getSmtpTransporter(queue) {
     const smtpPort = Number(queue.smtpPort || 587);
     const useTls = Boolean(queue.tls);
-    const secure = smtpPort === 465 || (smtpPort === 587 && useTls);
+    // 465 = implicit TLS (secure:true). 587/25 = STARTTLS/plain (secure:false).
+    const secure = smtpPort === 465;
 
     if (queue.serviceType === 'gmail') {
       const accessToken = await AuthService.getValidAccessToken(queue);
@@ -109,12 +129,19 @@ class MailService {
       host: queue.hostname,
       port: smtpPort,
       secure,
+      requireTLS: !secure && useTls,
       auth: {
         user: queue.username,
         pass: queue.password,
       },
       tls: getTlsOptions(queue.hostname),
     });
+  }
+
+  static async testSmtpConnection(queue) {
+    const transporter = await this.getSmtpTransporter(queue);
+    await transporter.verify();
+    return true;
   }
 
   static async sendEmail({
@@ -131,7 +158,7 @@ class MailService {
     headers = {},
   }) {
     const transporter = await this.getSmtpTransporter(queue);
-    return transporter.sendMail({
+    const info = await transporter.sendMail({
       from: from || queue.username,
       to,
       cc,
@@ -143,6 +170,8 @@ class MailService {
       attachments,
       headers,
     });
+    this.assertDeliveryAccepted(info, to);
+    return info;
   }
 
   static async persistSentEmail({

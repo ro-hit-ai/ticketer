@@ -3,9 +3,41 @@ const ImapSimple = require('imap-simple');
 const { track } = require('../lib/hog');
 const { requirePermission } = require('../lib/roles');
 const EmailQueue = require('../models/EmailQueue');
-const redisClient = require('../lib/redisClient');
+const OutboundEmailJob = require('../models/OutboundEmailJob');
+const { MailService } = require('../lib/services/smtp.service');
+const { emitAuditLog } = require('../lib/services/auditLog.service');
 
 const router = express.Router();
+
+function attachImapErrorHandler(connection, context = {}) {
+  if (!connection || typeof connection.on !== 'function') {
+    return connection;
+  }
+
+  if (connection.__ticketerImapErrorHandlerAttached) {
+    return connection;
+  }
+
+  Object.defineProperty(connection, '__ticketerImapErrorHandlerAttached', {
+    value: true,
+    enumerable: false,
+    configurable: true,
+    writable: false,
+  });
+
+  connection.on('error', (error) => {
+    console.error('IMAP test connection emitted error event:', {
+      message: error?.message || String(error),
+      code: error?.code || null,
+      errno: error?.errno || null,
+      syscall: error?.syscall || null,
+      source: error?.source || null,
+      ...context,
+    });
+  });
+
+  return connection;
+}
 
 function toBoolean(value, fallback = false) {
   if (typeof value === 'boolean') return value;
@@ -141,8 +173,6 @@ router.delete(
         });
       }
 
-      await redisClient.del(`mailbox:${id}:tokens`);
-
       res.status(200).send({
         success: true,
         message: 'Email queue deleted successfully',
@@ -180,6 +210,11 @@ router.post('/test-connection',
     };
 
     const connection = await ImapSimple.connect({ imap: imapConfig });
+    attachImapErrorHandler(connection, {
+      queueId: String(queue._id),
+      username: queue.username || null,
+      host: queue.hostname || null,
+    });
     await connection.openBox('INBOX');
     connection.end();
 
@@ -196,5 +231,119 @@ router.post('/test-connection',
     });
   }
 });
+
+// Test SMTP connection for a queue
+router.post('/test-smtp-connection', async (req, res) => {
+  try {
+    const { queueId } = req.body;
+    const queue = await EmailQueue.findById(queueId);
+    if (!queue) {
+      return res.status(404).send({ success: false, message: 'Queue not found' });
+    }
+
+    await MailService.testSmtpConnection(queue);
+    return res.status(200).send({
+      success: true,
+      message: `SMTP connection successful for ${queue.username}`,
+    });
+  } catch (error) {
+    console.error('SMTP test connection failed:', error);
+    return res.status(500).send({
+      success: false,
+      message: 'SMTP connection test failed',
+      error: error.message,
+    });
+  }
+});
+
+router.get(
+  '/jobs',
+  requirePermission(['integration::manage']),
+  async (req, res) => {
+    try {
+      const status = String(req.query.status || '').trim().toLowerCase();
+      const limit = Math.min(Math.max(Number(req.query.limit || 50), 1), 200);
+      const query = {};
+
+      if (status) {
+        query.status = status;
+      }
+
+      const jobs = await OutboundEmailJob.find(query)
+        .sort({ createdAt: -1 })
+        .limit(limit)
+        .lean();
+
+      return res.status(200).json({
+        success: true,
+        jobs,
+      });
+    } catch (error) {
+      console.error('Error fetching outbound jobs:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Internal server error',
+        error: error.message,
+      });
+    }
+  }
+);
+
+router.post(
+  '/jobs/:id/retry',
+  requirePermission(['integration::manage']),
+  async (req, res) => {
+    try {
+      const job = await OutboundEmailJob.findById(req.params.id);
+      if (!job) {
+        return res.status(404).json({ success: false, message: 'Job not found' });
+      }
+
+      if (!['failed', 'dead'].includes(job.status)) {
+        return res.status(409).json({
+          success: false,
+          message: `Only failed/dead jobs can be retried. Current status: ${job.status}`,
+        });
+      }
+
+      const previousStatus = job.status;
+      job.status = 'pending';
+      job.nextRetryAt = new Date();
+      job.lockedAt = null;
+      job.lockedBy = null;
+      job.lastError = null;
+      await job.save();
+
+      await emitAuditLog({
+        eventType: 'job_retry',
+        actor: {
+          actorType: 'user',
+          actorId: String(req.user?._id || ''),
+          actorEmail: req.user?.email || null,
+          actorName: req.user?.name || null,
+        },
+        entityType: 'outbound_email_job',
+        entityId: job._id,
+        metadata: {
+          previousStatus,
+          attempt: job.attempt,
+        },
+      });
+
+      return res.status(200).json({
+        success: true,
+        message: 'Job re-queued for retry',
+        jobId: job._id,
+      });
+    } catch (error) {
+      console.error('Error retrying outbound job:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Internal server error',
+        error: error.message,
+      });
+    }
+  }
+);
 
 module.exports = router;

@@ -111,7 +111,7 @@ const messageSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ['draft', 'sent', 'delivered', 'received', 'failed'],
+      enum: ['draft', 'queued', 'processing', 'sent', 'delivered', 'received', 'failed'],
       default: 'sent',
     },
     metadata: {

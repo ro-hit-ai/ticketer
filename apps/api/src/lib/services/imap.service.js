@@ -325,6 +325,36 @@ function safeEndConnection(connection, queueId) {
   }
 }
 
+function attachImapErrorHandler(connection, context = {}) {
+  if (!connection || typeof connection.on !== 'function') {
+    return connection;
+  }
+
+  if (connection.__ticketerImapErrorHandlerAttached) {
+    return connection;
+  }
+
+  Object.defineProperty(connection, '__ticketerImapErrorHandlerAttached', {
+    value: true,
+    enumerable: false,
+    configurable: true,
+    writable: false,
+  });
+
+  connection.on('error', (error) => {
+    console.error('IMAP connection emitted error event:', {
+      message: error?.message || String(error),
+      code: error?.code || null,
+      errno: error?.errno || null,
+      syscall: error?.syscall || null,
+      source: error?.source || null,
+      ...context,
+    });
+  });
+
+  return connection;
+}
+
 async function ensureTicketForThread({ thread, parsed, fromEmail, queue, mailboxId }) {
   if (thread?.ticketId) {
     return thread.ticketId;
@@ -568,6 +598,11 @@ class ImapService {
     try {
       const imapConfig = await this.getImapConfig(queue);
       connection = await ImapSimple.connect({ imap: imapConfig });
+      attachImapErrorHandler(connection, {
+        mode: 'test-fetch',
+        queueId: String(queue._id),
+        username: queue.username || null,
+      });
       await connection.openBox('INBOX');
 
       const unseenResults = await connection.search(['UNSEEN'], { bodies: [], markSeen: false });
@@ -1047,6 +1082,12 @@ await Comment.create({
               keepalive: imapConfig.keepalive || false,
             });
             connection = await ImapSimple.connect({ imap: imapConfig });
+            attachImapErrorHandler(connection, {
+              mode: 'fetch-emails',
+              queueId: String(queue._id),
+              username: queue.username || null,
+              attempt,
+            });
             logImapDebug('IMAP connection established', {
               ...buildQueueDebugInfo(queue),
               attempt,
@@ -1106,6 +1147,11 @@ static async moveEmailOnServer(messageId, targetFolder) {
   
   for (const queue of queues) {
     const connection = await ImapSimple.connect({ imap: await this.getImapConfig(queue) });
+    attachImapErrorHandler(connection, {
+      mode: 'move-email-on-server',
+      queueId: String(queue._id),
+      username: queue.username || null,
+    });
     await connection.openBox('INBOX'); // adjust if email is in another folder
 
     const results = await connection.search(['HEADER', 'Message-ID', messageId], { bodies: [] });

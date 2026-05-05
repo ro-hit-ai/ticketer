@@ -11,6 +11,7 @@ const { attachUser } = require('./lib/session');
 // Custom imports
 const { track } = require("./lib/hog");
 const { getEmails } = require("./lib/imap");
+const { OutboundEmailQueueService } = require("./lib/services/outboundEmailQueue.service");
 const { registerRoutes } = require("./routes"); // combined routes
 
 const corsOrigins = String(process.env.CORS_ALLOWED_ORIGINS || "")
@@ -171,6 +172,11 @@ async function start() {
       if (pollingEnabled) {
         const pollingIntervalMs = Math.max(Number(process.env.EMAIL_POLLING_INTERVAL_MS || 10000), 5000);
         setInterval(() => getEmails(), pollingIntervalMs);
+      }
+
+      const worker = OutboundEmailQueueService.startWorker();
+      if (worker) {
+        console.log(`📨 Outbound email worker started (${worker.workerId})`);
       }
     });
 

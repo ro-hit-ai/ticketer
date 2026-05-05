@@ -63,10 +63,15 @@ function isUsableSnapshotPayload(payload) {
 
   const hasCanonicalFields =
     'applicationId' in payload ||
+    'application_id' in payload ||
     'currentStage' in payload ||
+    'current_stage' in payload ||
     'rawCaseStatus' in payload ||
+    'raw_case_status' in payload ||
     'ownerSummary' in payload ||
+    'owner_summary' in payload ||
     'pendingItemsSummary' in payload ||
+    'pending_items_summary' in payload ||
     'snapshot' in payload;
 
   return hasCanonicalFields;
@@ -98,46 +103,54 @@ function coerceJsonLike(value) {
 }
 
 function normalizeWorkflowSnapshot(payload = {}) {
-  const ownerSummary = normalizeObject(payload.ownerSummary);
-  const pendingItemsSummary = normalizeObject(payload.pendingItemsSummary);
-  const lastTimelineEvent = normalizeObject(payload.lastTimelineEvent);
-  const tatConfig = normalizeObject(payload.tatConfig);
+  const ownerSummary = normalizeObject(payload.ownerSummary || payload.owner_summary);
+  const pendingItemsSummary = normalizeObject(payload.pendingItemsSummary || payload.pending_items_summary);
+  const lastTimelineEvent = normalizeObject(payload.lastTimelineEvent || payload.last_timeline_event);
+  const tatConfig = normalizeObject(payload.tatConfig || payload.tat_config);
+
+  const validator = normalizeObject(ownerSummary.validator || ownerSummary.validator_summary);
+  const verifierRaw = ownerSummary.verifier || ownerSummary.verifiers || ownerSummary.verifier_summary;
+  const verifier = Array.isArray(verifierRaw)
+    ? verifierRaw
+    : verifierRaw && typeof verifierRaw === 'object'
+      ? [verifierRaw]
+      : [];
 
   return {
-    applicationId: payload.applicationId || null,
-    caseId: payload.caseId || null,
-    candidateName: payload.candidateName || null,
-    candidateEmail: payload.candidateEmail || null,
-    currentStage: payload.currentStage || null,
-    rawCaseStatus: payload.rawCaseStatus || null,
+    applicationId: pickFirst(payload.applicationId, payload.application_id),
+    caseId: pickFirst(payload.caseId, payload.case_id),
+    candidateName: pickFirst(payload.candidateName, payload.candidate_name),
+    candidateEmail: pickFirst(payload.candidateEmail, payload.candidate_email),
+    currentStage: pickFirst(payload.currentStage, payload.current_stage),
+    rawCaseStatus: pickFirst(payload.rawCaseStatus, payload.raw_case_status),
     ownerSummary: {
-      mode: ownerSummary.mode || null,
-      validator: normalizeObject(ownerSummary.validator),
-      verifier: normalizeArray(ownerSummary.verifier),
-      dbVerifier: normalizeObject(ownerSummary.dbVerifier),
+      mode: pickFirst(ownerSummary.mode, ownerSummary.assignment_mode),
+      validator,
+      verifier: normalizeArray(verifier),
+      dbVerifier: normalizeObject(ownerSummary.dbVerifier || ownerSummary.db_verifier),
     },
     pendingItemsSummary: {
-      totalRequired: Number(pendingItemsSummary.totalRequired || 0),
-      pendingCount: Number(pendingItemsSummary.pendingCount || 0),
-      holdCount: Number(pendingItemsSummary.holdCount || 0),
-      rejectedCount: Number(pendingItemsSummary.rejectedCount || 0),
-      items: normalizeArray(pendingItemsSummary.items),
+      totalRequired: Number(pickFirst(pendingItemsSummary.totalRequired, pendingItemsSummary.total_required, 0)),
+      pendingCount: Number(pickFirst(pendingItemsSummary.pendingCount, pendingItemsSummary.pending_count, 0)),
+      holdCount: Number(pickFirst(pendingItemsSummary.holdCount, pendingItemsSummary.hold_count, 0)),
+      rejectedCount: Number(pickFirst(pendingItemsSummary.rejectedCount, pendingItemsSummary.rejected_count, 0)),
+      items: normalizeArray(pendingItemsSummary.items || pendingItemsSummary.item_list),
     },
     lastTimelineEvent: {
-      at: lastTimelineEvent.at || null,
-      eventType: lastTimelineEvent.eventType || null,
-      sectionKey: lastTimelineEvent.sectionKey || null,
-      message: lastTimelineEvent.message || null,
-      actorRole: lastTimelineEvent.actorRole || null,
-      actorUserId: lastTimelineEvent.actorUserId || null,
-      actorName: lastTimelineEvent.actorName || null,
+      at: pickFirst(lastTimelineEvent.at, lastTimelineEvent.created_at),
+      eventType: pickFirst(lastTimelineEvent.eventType, lastTimelineEvent.event_type),
+      sectionKey: pickFirst(lastTimelineEvent.sectionKey, lastTimelineEvent.section_key),
+      message: pickFirst(lastTimelineEvent.message, lastTimelineEvent.event_message),
+      actorRole: pickFirst(lastTimelineEvent.actorRole, lastTimelineEvent.actor_role),
+      actorUserId: pickFirst(lastTimelineEvent.actorUserId, lastTimelineEvent.actor_user_id),
+      actorName: pickFirst(lastTimelineEvent.actorName, lastTimelineEvent.actor_name),
     },
     tatConfig: {
-      clientInternalTatDays: tatConfig.clientInternalTatDays ?? null,
-      weekendRules: tatConfig.weekendRules || null,
+      clientInternalTatDays: pickFirst(tatConfig.clientInternalTatDays, tatConfig.client_internal_tat_days, tatConfig.internal_tat),
+      weekendRules: pickFirst(tatConfig.weekendRules, tatConfig.weekend_rules),
     },
-    workflowSource: payload.workflowSource || 'snapshot',
-    workflowDebug: normalizeObject(payload.workflowDebug),
+    workflowSource: pickFirst(payload.workflowSource, payload.workflow_source, 'snapshot'),
+    workflowDebug: normalizeObject(payload.workflowDebug || payload.workflow_debug),
   };
 }
 

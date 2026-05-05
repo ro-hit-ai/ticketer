@@ -596,3 +596,74 @@ body {
 *::-webkit-scrollbar {
   display: none;
 }
+
+/* ---------------------------------------------
+   DeskSkin v2 (non-destructive visual layer)
+---------------------------------------------- */
+.desk-skin-root {
+  --desk-surface: rgba(255, 255, 255, 0.9);
+  --desk-surface-strong: rgba(255, 255, 255, 0.96);
+  --desk-border-soft: rgba(148, 163, 184, 0.3);
+  --desk-border-strong: rgba(148, 163, 184, 0.45);
+  --desk-text-main: #0f172a;
+  --desk-text-muted: #64748b;
+  --desk-accent: #0ea5a4;
+}
+
+.desk-skin-panel {
+  background: var(--desk-surface);
+  border: 1px solid var(--desk-border-soft);
+  box-shadow: 0 20px 50px -36px rgba(15, 23, 42, 0.45);
+  backdrop-filter: blur(8px);
+}
+
+.desk-skin-panel-strong {
+  background: var(--desk-surface-strong);
+  border: 1px solid var(--desk-border-strong);
+  box-shadow: 0 20px 50px -36px rgba(15, 23, 42, 0.5);
+  backdrop-filter: blur(10px);
+}
+
+.desk-skin-chip {
+  border: 1px solid var(--desk-border-soft);
+  background: rgba(248, 250, 252, 0.95);
+  color: var(--desk-text-muted);
+}
+
+.desk-skin-hover:hover {
+  background: rgba(241, 245, 249, 0.9);
+}
+
+/* Pass 2: uniform density + sticky action bars (safe visual only) */
+.desk-v2-actionbar {
+  position: sticky;
+  top: 0.5rem;
+  z-index: 20;
+  background: rgba(255, 255, 255, 0.95);
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  backdrop-filter: blur(8px);
+}
+
+.desk-v2-btn {
+  height: 1.9rem;
+  padding: 0 0.625rem;
+  border-radius: 0.42rem;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.desk-v2-input {
+  height: 1.9rem;
+  border-radius: 0.42rem;
+  font-size: 12px;
+}
+
+.desk-v2-row {
+  min-height: 2.55rem;
+}
+
+.desk-v2-title {
+  font-size: 1.1rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}

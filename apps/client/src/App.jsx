@@ -42,6 +42,7 @@ import Authentication from "./pages/admin/authentication";
 import Roles from "./pages/admin/roles";
 import NewRole from "./pages/admin/roles/new";
 import Logs from "./pages/admin/logs";
+import MailerOpsPage from "./pages/admin/mailer-ops";
 import AgentMailboxes from "./pages/agents/mailboxes";
 import AgentMessages from "./pages/agents/messages";
 import AgentThreads from "./pages/agents/threads";
@@ -272,6 +273,7 @@ function App() {
             <Route path="roles" element={<Roles />} />
             <Route path="roles/new" element={<NewRole />} />
             <Route path="logs" element={<Logs />} />
+            <Route path="mailer-ops" element={<MailerOpsPage />} />
           </Route>
 
           {/* 404 */}

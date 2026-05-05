@@ -21,6 +21,7 @@ const RATE_LIMIT_WINDOW_MS = Number(process.env.PHP_BRIDGE_RATE_LIMIT_WINDOW_MS 
 const RATE_LIMIT_MAX_REQUESTS = Number(process.env.PHP_BRIDGE_RATE_LIMIT_MAX_REQUESTS || 120);
 const MAX_BULK_EMAILS = Number(process.env.PHP_BRIDGE_MAX_BULK_EMAILS || 200);
 const RATE_LIMIT_CLEANUP_INTERVAL_MS = Math.max(RATE_LIMIT_WINDOW_MS, 30 * 1000);
+const PHP_BRIDGE_DEBUG = String(process.env.PHP_BRIDGE_DEBUG || 'false').toLowerCase() === 'true';
 const requestWindowStore = new Map();
 
 function isValidEmail(value) {
@@ -53,6 +54,12 @@ function normalizeApplicationId(value) {
 
 function normalizeEmail(value) {
   return typeof value === 'string' ? value.trim().toLowerCase() : null;
+}
+
+function normalizeQueueId(value) {
+  if (value === null || value === undefined) return null;
+  const normalized = String(value).trim();
+  return normalized.length > 0 ? normalized : null;
 }
 
 function appendApplicationIdToSubject(subject, applicationId) {
@@ -275,9 +282,71 @@ function cleanupRateLimitStore(now) {
 
 setInterval(() => cleanupRateLimitStore(Date.now()), RATE_LIMIT_CLEANUP_INTERVAL_MS).unref();
 
+function summarizePhpBridgePayload(body) {
+  if (!body || typeof body !== 'object') return null;
+
+  const to = normalizeRecipients(body.to);
+  const attachments = Array.isArray(body.attachments) ? body.attachments : [];
+  const metadataKeys =
+    body.metadata && typeof body.metadata === 'object' ? Object.keys(body.metadata).slice(0, 20) : [];
+  const subjectLength = typeof body.subject === 'string' ? body.subject.length : 0;
+  const htmlLength = typeof body.htmlBody === 'string' ? body.htmlBody.length : 0;
+
+  return {
+    keys: Object.keys(body).slice(0, 30),
+    queueId: body.queueId || null,
+    applicationId: body.applicationId || body.sourceCaseId || body.metadata?.applicationId || null,
+    toCount: to.length,
+    toPreview: to.slice(0, 3),
+    subjectLength,
+    hasHtmlBody: htmlLength > 0,
+    htmlLength,
+    fromEmail: normalizeEmail(body.fromEmail),
+    hasFromName: typeof body.fromName === 'string' && body.fromName.trim().length > 0,
+    attachmentsCount: attachments.length,
+    attachmentNames: attachments
+      .map((attachment) => (attachment && typeof attachment.filename === 'string' ? attachment.filename : null))
+      .filter(Boolean)
+      .slice(0, 10),
+    metadataKeys,
+  };
+}
+
+function phpBridgeDebugLogger(req, res, next) {
+  if (!PHP_BRIDGE_DEBUG) return next();
+
+  const requestId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  req._phpBridgeRequestId = requestId;
+  const startedAt = Date.now();
+
+  console.log(`[PHP BRIDGE][${requestId}] IN`, {
+    method: req.method,
+    path: req.originalUrl || req.path,
+    ip: req.ip,
+    userAgent: req.headers['user-agent'] || null,
+    contentType: req.headers['content-type'] || null,
+    hasApiKey: Boolean(req.headers['x-api-key']),
+    payload: summarizePhpBridgePayload(req.body),
+  });
+
+  res.on('finish', () => {
+    console.log(`[PHP BRIDGE][${requestId}] OUT`, {
+      method: req.method,
+      path: req.originalUrl || req.path,
+      statusCode: res.statusCode,
+      durationMs: Date.now() - startedAt,
+    });
+  });
+
+  return next();
+}
+
 // Middleware to verify API key
 function authenticatePhp(req, res, next) {
   if (!API_KEY) {
+    if (PHP_BRIDGE_DEBUG) {
+      console.warn(`[PHP BRIDGE][${req._phpBridgeRequestId || 'no-id'}] Auth failed: PHP_API_KEY not configured`);
+    }
     return res.status(503).json({
       success: false,
       error: 'PHP bridge is disabled. Set PHP_API_KEY to enable it.'
@@ -286,6 +355,11 @@ function authenticatePhp(req, res, next) {
 
   const apiKey = req.headers['x-api-key'];
   if (!apiKey || apiKey !== API_KEY) {
+    if (PHP_BRIDGE_DEBUG) {
+      console.warn(`[PHP BRIDGE][${req._phpBridgeRequestId || 'no-id'}] Auth failed: invalid x-api-key`, {
+        hasApiKey: Boolean(apiKey),
+      });
+    }
     return res.status(401).json({ 
       success: false, 
       error: 'Unauthorized - Invalid API key' 
@@ -329,12 +403,17 @@ function rateLimitPhp(req, res, next) {
 }
 
 // Apply bridge-specific security middleware to every PHP bridge route
+router.use(phpBridgeDebugLogger);
 router.use(authenticatePhp, rateLimitPhp);
 
 router.post('/send-email', async (req, res) => {
   try {
-    const { subject, htmlBody, fromName, fromEmail, queueId = null } = req.body;
+    const { subject, htmlBody, fromName, fromEmail } = req.body;
     const metadata = req.body?.metadata && typeof req.body.metadata === 'object' ? req.body.metadata : {};
+    const requestedQueueId =
+      normalizeQueueId(req.body?.queueId) ||
+      normalizeQueueId(metadata?.queue_id) ||
+      null;
     const applicationIdCandidate =
       req.body?.applicationId ||
       req.body?.sourceCaseId ||
@@ -354,12 +433,27 @@ router.post('/send-email', async (req, res) => {
       });
     }
 
-    const queue = await resolveQueue(queueId);
+    const queue = await resolveQueue(requestedQueueId);
 
     if (!queue) {
+      const activeQueues = await EmailQueue.find({ active: true, isDeleted: false })
+        .select('_id name username')
+        .sort({ createdAt: 1 })
+        .limit(20)
+        .lean();
       return res.status(404).json({
         success: false,
-        error: 'Queue not found'
+        error: 'Queue not found',
+        details: {
+          requestedQueueId,
+          hint:
+            'Use a valid active queue _id from the current MongoDB database (and ensure isDeleted=false).',
+          availableActiveQueues: activeQueues.map((item) => ({
+            id: String(item._id),
+            name: item.name || null,
+            username: item.username || null,
+          })),
+        },
       });
     }
 
@@ -368,10 +462,18 @@ router.post('/send-email', async (req, res) => {
       : subject.trim();
 
     const textBody = htmlBody.replace(/<[^>]*>/g, '');
+    const queueEmail = normalizeEmail(queue.username);
+    const requestedFromEmail = normalizeEmail(fromEmail);
+    const safeFromEmail = requestedFromEmail === queueEmail ? requestedFromEmail : null;
+    if (requestedFromEmail && !safeFromEmail) {
+      console.warn(
+        `PHP bridge ignored fromEmail ${requestedFromEmail}; using authenticated queue sender ${queueEmail}`
+      );
+    }
     const sender =
-      fromEmail && fromName
-        ? `${fromName.trim()} <${fromEmail.trim()}>`
-        : (fromEmail ? fromEmail.trim() : undefined);
+      safeFromEmail && fromName
+        ? `${fromName.trim()} <${safeFromEmail}>`
+        : (safeFromEmail || undefined);
     
     // Add tracking pixel or metadata if needed
     let finalHtml = htmlBody;
@@ -490,7 +592,13 @@ router.post('/send-email', async (req, res) => {
     res.json({
       success: true,
       messageId: result.messageId,
-      queue: queue.name
+      queue: queue.name,
+      delivery: {
+        accepted: Array.isArray(result.accepted) ? result.accepted : [],
+        rejected: Array.isArray(result.rejected) ? result.rejected : [],
+        pending: Array.isArray(result.pending) ? result.pending : [],
+        response: result.response || null,
+      },
     });
 
   } catch (error) {
@@ -609,7 +717,8 @@ router.post('/application-completed', async (req, res) => {
  */
 router.post('/send-bulk', async (req, res) => {
   try {
-    const { emails, queueId = null } = req.body;
+    const { emails } = req.body;
+    const requestedQueueId = normalizeQueueId(req.body?.queueId);
     
     if (!Array.isArray(emails) || emails.length === 0) {
       return res.status(400).json({
@@ -624,12 +733,27 @@ router.post('/send-bulk', async (req, res) => {
       });
     }
 
-    const queue = await resolveQueue(queueId);
+    const queue = await resolveQueue(requestedQueueId);
 
     if (!queue) {
+      const activeQueues = await EmailQueue.find({ active: true, isDeleted: false })
+        .select('_id name username')
+        .sort({ createdAt: 1 })
+        .limit(20)
+        .lean();
       return res.status(404).json({
         success: false,
-        error: 'Queue not found'
+        error: 'Queue not found',
+        details: {
+          requestedQueueId,
+          hint:
+            'Use a valid active queue _id from the current MongoDB database (and ensure isDeleted=false).',
+          availableActiveQueues: activeQueues.map((item) => ({
+            id: String(item._id),
+            name: item.name || null,
+            username: item.username || null,
+          })),
+        },
       });
     }
 

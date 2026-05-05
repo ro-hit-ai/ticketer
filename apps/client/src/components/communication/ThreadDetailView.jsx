@@ -3,7 +3,7 @@ import { Link, useLocation } from "react-router-dom";
 import { ArrowLeft, Send } from "lucide-react";
 import { toast } from "react-toastify";
 import { useUser } from "../../store/session";
-import { getThreadFull, sendMessage } from "../../services/communication.service";
+import { getThreadFull, getThreadWorkflow, sendMessage } from "../../services/communication.service";
 import { getThreadTitle } from "../../utils/threadTitle";
 
 function formatTimestamp(value) {
@@ -61,6 +61,89 @@ function stringifyValue(value) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+function normalizeWorkflowPayload(fullPayload, workflowPayload) {
+  const candidate =
+    fullPayload?.workflow ||
+    workflowPayload ||
+    fullPayload?.thread?.workflowSnapshot ||
+    fullPayload?.thread?.metadata?.workflow ||
+    null;
+
+  if (!candidate) return null;
+
+  return {
+    currentStage: candidate.currentStage || candidate.stage || candidate.rawCaseStatus || null,
+    rawCaseStatus: candidate.rawCaseStatus || candidate.status || candidate.currentStage || null,
+    ownerSummary: candidate.ownerSummary || candidate.owners || {},
+    pendingItemsSummary:
+      candidate.pendingItemsSummary || {
+        pendingCount: candidate.pendingCount || 0,
+        holdCount: candidate.holdCount || 0,
+      },
+    tatConfig:
+      candidate.tatConfig || {
+        clientInternalTatDays: candidate.clientInternalTatDays || null,
+        weekendRules: candidate.weekendRules || null,
+      },
+    lastTimelineEvent: candidate.lastTimelineEvent || null,
+    candidateEmail: candidate.candidateEmail || fullPayload?.thread?.applicantEmail || null,
+  };
+}
+
+function renderEmailBody(body) {
+  const text = String(body || "").replace(/\r\n/g, "\n");
+  const lines = text.split("\n");
+  const blocks = [];
+  let normal = [];
+  let quoted = [];
+
+  const pushNormal = () => {
+    if (normal.length) {
+      blocks.push({ type: "normal", lines: normal });
+      normal = [];
+    }
+  };
+
+  const pushQuoted = () => {
+    if (quoted.length) {
+      blocks.push({ type: "quoted", lines: quoted.map((line) => line.replace(/^\s*>+\s?/, "")) });
+      quoted = [];
+    }
+  };
+
+  lines.forEach((line) => {
+    const isQuoted = /^\s*>/.test(line);
+    if (isQuoted) {
+      pushNormal();
+      quoted.push(line);
+    } else {
+      pushQuoted();
+      normal.push(line);
+    }
+  });
+  pushNormal();
+  pushQuoted();
+
+  return blocks.map((block, index) => {
+    if (block.type === "quoted") {
+      return (
+        <div key={`q-${index}`} className="mt-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+          <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">Previous message</div>
+          <div className="whitespace-pre-wrap">{block.lines.join("\n").trim()}</div>
+        </div>
+      );
+    }
+
+    const value = block.lines.join("\n").trim();
+    if (!value) return null;
+    return (
+      <div key={`n-${index}`} className="whitespace-pre-wrap text-sm text-slate-700">
+        {value}
+      </div>
+    );
+  });
+}
+
 export default function ThreadDetailView({ backTo, backLabel }) {
   const location = useLocation();
   const queryParams = new URLSearchParams(location.search);
@@ -76,6 +159,7 @@ export default function ThreadDetailView({ backTo, backLabel }) {
   const [internalRecipientUserId, setInternalRecipientUserId] = useState("");
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
+  const [denseMode, setDenseMode] = useState(localStorage.getItem("layoutDensity") !== "comfortable");
   const replyRecipient = resolveReplyRecipient(thread, workflow);
   const canUseInternalRouting = Boolean(user?.isAgent || user?.isAdmin);
   const defaultInternalUserId =
@@ -101,7 +185,13 @@ export default function ThreadDetailView({ backTo, backLabel }) {
       const data = await getThreadFull(fetchWithAuth, threadId);
       setThread(data.thread);
       setMessages(data.messages);
-      setWorkflow(data.workflow);
+      let workflowFromEndpoint = null;
+      try {
+        workflowFromEndpoint = await getThreadWorkflow(fetchWithAuth, threadId);
+      } catch {
+        workflowFromEndpoint = null;
+      }
+      setWorkflow(normalizeWorkflowPayload(data, workflowFromEndpoint));
       setInternalRecipientUserId((current) => current || data.thread?.workflowSnapshot?.currentUserId || data.thread?.lastAssignedUserId || "");
     } catch (error) {
       toast.error(error.message || "Failed to fetch thread");
@@ -113,6 +203,11 @@ export default function ThreadDetailView({ backTo, backLabel }) {
   useEffect(() => {
     loadThread();
   }, [threadId]);
+  useEffect(() => {
+    const onStorage = () => setDenseMode(localStorage.getItem("layoutDensity") !== "comfortable");
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
 
   const handleSend = async (event) => {
     event.preventDefault();
@@ -178,11 +273,11 @@ export default function ThreadDetailView({ backTo, backLabel }) {
   };
 
   return (
-    <div className="space-y-6">
+    <div className={denseMode ? "space-y-4" : "space-y-6"}>
       <div className="flex items-center gap-3">
         <Link
           to={backTo}
-          className="inline-flex items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+          className={denseMode ? "desk-v2-btn inline-flex items-center gap-2 border border-slate-200 bg-white text-xs font-medium text-slate-700 hover:bg-slate-50" : "inline-flex items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"}
         >
           <ArrowLeft className="h-4 w-4" />
           {backLabel}
@@ -203,10 +298,10 @@ export default function ThreadDetailView({ backTo, backLabel }) {
         </div>
       ) : (
         <>
-          <div className="grid gap-6 xl:grid-cols-[minmax(0,2fr)_minmax(320px,1fr)]">
-            <div className="rounded-lg border border-slate-200 bg-white p-5">
+          <div className={denseMode ? "grid gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(320px,1fr)]" : "grid gap-6 xl:grid-cols-[minmax(0,2fr)_minmax(320px,1fr)]"}>
+            <div className={denseMode ? "rounded-lg border border-slate-200 bg-white p-4" : "rounded-lg border border-slate-200 bg-white p-5"}>
               <div className="text-sm text-slate-500">{thread.sourceCaseId}</div>
-              <h1 className="mt-1 text-2xl font-semibold text-slate-950">
+              <h1 className={denseMode ? "desk-v2-title mt-1 text-slate-950" : "mt-1 text-2xl font-semibold text-slate-950"}>
                 {getThreadTitle(thread)}
               </h1>
               <div className="mt-3 flex flex-wrap gap-4 text-sm text-slate-500">
@@ -215,7 +310,7 @@ export default function ThreadDetailView({ backTo, backLabel }) {
               </div>
             </div>
 
-            <div className="rounded-lg border border-slate-200 bg-white p-5">
+            <div className={denseMode ? "rounded-lg border border-slate-200 bg-white p-4" : "rounded-lg border border-slate-200 bg-white p-5"}>
               <div className="text-sm font-medium text-slate-500">Workflow Snapshot</div>
               {workflow ? (
                 <div className="mt-4 space-y-4 text-sm">
@@ -278,7 +373,7 @@ export default function ThreadDetailView({ backTo, backLabel }) {
           </div>
 
           <div className="rounded-lg border border-slate-200 bg-white">
-            <div className="border-b border-slate-200 px-5 py-4">
+            <div className={denseMode ? "border-b border-slate-200 px-4 py-3" : "border-b border-slate-200 px-5 py-4"}>
               <div className="text-lg font-medium text-slate-900">Conversation</div>
             </div>
 
@@ -287,7 +382,7 @@ export default function ThreadDetailView({ backTo, backLabel }) {
             ) : (
               <div className="divide-y divide-slate-200">
                 {messages.map((message) => (
-                  <div key={message._id} className="px-5 py-4">
+                  <div key={message._id} className={denseMode ? "px-4 py-3" : "px-5 py-4"}>
                     <div className="flex items-center justify-between gap-4">
                       <div className="font-medium text-slate-900">
                         {getSenderLabel(message)}
@@ -303,8 +398,8 @@ export default function ThreadDetailView({ backTo, backLabel }) {
                     <div className="mt-1 text-xs text-slate-400">
                       {formatTimestamp(message.createdAt)}
                     </div>
-                    <div className="mt-3 whitespace-pre-wrap text-sm text-slate-700">
-                      {message.body}
+                    <div className="mt-3 space-y-2">
+                      {renderEmailBody(message.body)}
                     </div>
                   </div>
                 ))}
@@ -312,10 +407,7 @@ export default function ThreadDetailView({ backTo, backLabel }) {
             )}
           </div>
 
-          <form
-            onSubmit={handleSend}
-            className="rounded-lg border border-slate-200 bg-white p-5"
-          >
+          <form onSubmit={handleSend} className={denseMode ? "rounded-lg border border-slate-200 bg-white p-4" : "rounded-lg border border-slate-200 bg-white p-5"}>
             <div className="text-lg font-medium text-slate-900">Reply</div>
             <div className="mt-2 text-sm text-slate-500">
               To: {effectiveRecipientLabel}
@@ -324,7 +416,7 @@ export default function ThreadDetailView({ backTo, backLabel }) {
               <label className="mt-4 block space-y-1">
                 <span className="text-sm font-medium text-slate-700">Recipient Email</span>
                 <input
-                  className="w-full rounded-md border border-slate-200 px-3 py-2 text-sm"
+                  className={denseMode ? "desk-v2-input w-full border border-slate-200 px-2.5 py-1 text-xs" : "w-full rounded-md border border-slate-200 px-3 py-2 text-sm"}
                   value={manualEmail}
                   onChange={(event) => setManualEmail(event.target.value)}
                   placeholder="Enter applicant email"
@@ -336,7 +428,7 @@ export default function ThreadDetailView({ backTo, backLabel }) {
                 <label className="block space-y-1">
                   <span className="text-sm font-medium text-slate-700">Send Mode</span>
                   <select
-                    className="w-full rounded-md border border-slate-200 px-3 py-2 text-sm"
+                    className={denseMode ? "desk-v2-input w-full border border-slate-200 px-2.5 py-1 text-xs" : "w-full rounded-md border border-slate-200 px-3 py-2 text-sm"}
                     value={sendMode}
                     onChange={(event) => setSendMode(event.target.value)}
                   >
@@ -349,7 +441,7 @@ export default function ThreadDetailView({ backTo, backLabel }) {
                   <label className="block space-y-1">
                     <span className="text-sm font-medium text-slate-700">Recipient User Id</span>
                     <input
-                      className="w-full rounded-md border border-slate-200 px-3 py-2 text-sm"
+                      className={denseMode ? "desk-v2-input w-full border border-slate-200 px-2.5 py-1 text-xs" : "w-full rounded-md border border-slate-200 px-3 py-2 text-sm"}
                       value={internalRecipientUserId}
                       onChange={(event) => setInternalRecipientUserId(event.target.value)}
                       placeholder={defaultInternalUserId || "Internal user id"}
@@ -362,7 +454,7 @@ export default function ThreadDetailView({ backTo, backLabel }) {
               <label className="mt-4 block space-y-1">
                 <span className="text-sm font-medium text-slate-700">Recipient Emails</span>
                 <input
-                  className="w-full rounded-md border border-slate-200 px-3 py-2 text-sm"
+                  className={denseMode ? "desk-v2-input w-full border border-slate-200 px-2.5 py-1 text-xs" : "w-full rounded-md border border-slate-200 px-3 py-2 text-sm"}
                   value={internalRecipientEmail}
                   onChange={(event) => setInternalRecipientEmail(event.target.value)}
                   placeholder="Optional explicit email override"
@@ -370,7 +462,7 @@ export default function ThreadDetailView({ backTo, backLabel }) {
               </label>
             ) : null}
             <textarea
-              className="mt-4 min-h-32 w-full rounded-md border border-slate-200 px-3 py-2 text-sm"
+              className={denseMode ? "mt-4 min-h-24 w-full rounded-md border border-slate-200 px-2.5 py-2 text-xs" : "mt-4 min-h-32 w-full rounded-md border border-slate-200 px-3 py-2 text-sm"}
               value={body}
               onChange={(event) => setBody(event.target.value)}
               placeholder="Write your message"
@@ -386,7 +478,7 @@ export default function ThreadDetailView({ backTo, backLabel }) {
                     ? !replyRecipient && !manualEmail.trim()
                     : !internalRecipientEmail.trim() && !internalRecipientUserId.trim())
                 }
-                className="inline-flex items-center rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"
+                className={denseMode ? "desk-v2-btn inline-flex items-center bg-slate-900 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-50" : "inline-flex items-center rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"}
               >
                 <Send className="mr-2 h-4 w-4" />
                 {sending ? "Sending..." : sendMode === "internal" ? "Send Internal Email" : "Send Reply"}

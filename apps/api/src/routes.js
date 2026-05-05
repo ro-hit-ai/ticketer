@@ -1,4 +1,5 @@
 const authRoutes = require("./controllers/auth");
+const auditLogRoutes = require("./controllers/auditLogs");
 const clientRoutes = require("./controllers/clients");
 const configRoutes = require("./controllers/config");
 const dataRoutes = require("./controllers/data");
@@ -7,6 +8,7 @@ const emailQueueRoutes = require("./controllers/queue");
 const mailboxRoutes = require("./controllers/mailboxes");
 const messageRoutes = require("./controllers/messages");
 const roleRoutes = require("./controllers/roles");
+const monitoringRoutes = require("./controllers/monitoring");
 const objectStoreRoutes = require("./controllers/storage");
 const ticketRoutes = require("./controllers/ticket");
 const threadRoutes = require("./controllers/threads");
@@ -22,6 +24,7 @@ const phpBridgeRouter = require("./lib/services/phpBridge");
 
 function registerRoutes(app) {
    app.use("/api/v1/auth", authRoutes);
+   app.use("/api/v1/audit-logs", auditLogRoutes);
    app.use("/api/v1/email-queue",emailQueueRoutes);
    app.use("/api/v1/mailboxes", mailboxRoutes);
    app.use("/api/v1/messages", messageRoutes);
@@ -36,9 +39,13 @@ function registerRoutes(app) {
    app.use("/api/v1/time",timeTrackingRoutes);
    app.use("/api/v1/storage",objectStoreRoutes);
    app.use("/api/v1/role",roleRoutes);
+   app.use("/api/v1/monitoring", monitoringRoutes);
    app.use("/api/v1/imap",imapRouter);
    app.use("/api/v1/smtp",smtpRouter);
    app.use("/api/v1/php", phpBridgeRouter);
+   // Backward-compatible aliases for legacy PHP integrations.
+   app.use("/api/php", phpBridgeRouter);
+   app.use("/php", phpBridgeRouter);
    // app.use('/api/v1/email', emailRouter);
 }
 module.exports = { registerRoutes };

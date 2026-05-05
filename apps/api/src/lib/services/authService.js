@@ -1,7 +1,6 @@
 // services/authService.js
 const { google } = require("googleapis");
 const EmailQueue = require("../../models/EmailQueue");
-const redisClient = require("../../lib/redisClient");
 
 class AuthService {
 static async getValidAccessToken(queue) {
@@ -13,18 +12,8 @@ static async getValidAccessToken(queue) {
     throw new Error("No refresh token found. Please re-authorize Gmail with prompt=consent");
   }
 
-  const redisKey = `gmail:accessToken:${queue._id}`;
-
   // Check expiry properly
   const notExpired = queue.tokenExpiry && Date.now() < new Date(queue.tokenExpiry).getTime();
-
-  // Try Redis only if still valid
-  if (notExpired) {
-    const cachedToken = await redisClient.get(redisKey);
-    if (cachedToken) {
-      return cachedToken;
-    }
-  }
 
   // Setup OAuth2 client
   const oAuth2Client = new google.auth.OAuth2(
@@ -51,12 +40,6 @@ static async getValidAccessToken(queue) {
       accessToken: token,
       tokenExpiry: expiry,
     });
-
-    // Update Redis
-    await redisClient.setEx(redisKey, 3600, token);
-  } else {
-    // Cache DB token in Redis
-    await redisClient.setEx(redisKey, 3600, token);
   }
 
   return token;

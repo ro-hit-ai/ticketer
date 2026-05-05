@@ -51,6 +51,7 @@ const Tickets = () => {
   const [filterSearch, setFilterSearch] = useState("");
   const [kanbanGrouping, setKanbanGrouping] = useState('status');
   const [sortBy, setSortBy] = useState('newest');
+  const [denseMode, setDenseMode] = useState(localStorage.getItem("layoutDensity") !== "comfortable");
 
   // Detect routes
   const isAgentRoute = location.pathname.startsWith("/agents");
@@ -253,6 +254,11 @@ const Tickets = () => {
   useEffect(() => {
     localStorage.setItem('ticketUISettings', JSON.stringify(uiSettings));
   }, [uiSettings]);
+  useEffect(() => {
+    const onStorage = () => setDenseMode(localStorage.getItem("layoutDensity") !== "comfortable");
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
 
   // Loading state
   if (loading) {
@@ -652,13 +658,13 @@ const Tickets = () => {
     <tr
       key={ticket._id}
       onClick={() => navigate(`${basePath}/tickets/${ticket._id}`)}
-      className="hover:bg-slate-50/80 cursor-pointer"
+      className={denseMode ? "hover:bg-slate-50/80 cursor-pointer" : "hover:bg-slate-50/80 cursor-pointer"}
     >
-      <td className="px-4 py-3 text-xs font-mono text-slate-600">
+      <td className={denseMode ? "px-3 py-2 text-[11px] font-mono text-slate-600" : "px-4 py-3 text-xs font-mono text-slate-600"}>
         {uiSettings.showTicketNumbers && `#${ticket.number}`}
       </td>
 
-      <td className="px-4 py-3 text-sm font-medium text-slate-900">
+      <td className={denseMode ? "px-3 py-2 text-xs font-medium text-slate-900" : "px-4 py-3 text-sm font-medium text-slate-900"}>
         <div className="flex flex-col">
           <span className="line-clamp-1">{ticket.title}</span>
           <span className="mt-0.5 text-[11px] text-slate-400">
@@ -667,7 +673,7 @@ const Tickets = () => {
         </div>
       </td>
 
-      <td className="px-4 py-3">
+      <td className={denseMode ? "px-3 py-2" : "px-4 py-3"}>
         {uiSettings.showPriority && (
           <span className="inline-flex items-center rounded-full px-2.5 py-0.5 text-[11px] font-semibold bg-indigo-50 text-indigo-700 border border-indigo-100">
             {ticket.priority}
@@ -675,7 +681,7 @@ const Tickets = () => {
         )}
       </td>
 
-      <td className="px-4 py-3 text-sm">
+      <td className={denseMode ? "px-3 py-2 text-xs" : "px-4 py-3 text-sm"}>
         <span
           className={`inline-flex rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${
             ticket.isComplete
@@ -687,7 +693,7 @@ const Tickets = () => {
         </span>
       </td>
 
-      <td className="px-4 py-3 text-sm">
+      <td className={denseMode ? "px-3 py-2 text-xs" : "px-4 py-3 text-sm"}>
         <div className="flex items-center gap-2">
           {uiSettings.showAvatars && ticket.assignedTo && (
             <div className="h-6 w-6 rounded-full bg-blue-100 flex items-center justify-center">
@@ -702,7 +708,7 @@ const Tickets = () => {
         </div>
       </td>
 
-      <td className="px-4 py-3 text-right text-sm">
+      <td className={denseMode ? "px-3 py-2 text-right text-xs" : "px-4 py-3 text-right text-sm"}>
         {canAssign ? (
           <select
             disabled={assigning === ticket._id || ticket.isComplete}
@@ -729,15 +735,15 @@ const Tickets = () => {
   );
 
   return (
-    <div className="space-y-5 p-4">
+    <div className={denseMode ? "space-y-3 p-3" : "space-y-5 p-4"}>
       {/* Header */}
-      <div className="flex items-center justify-between rounded-xl border bg-white px-4 py-3 shadow-sm">
+      <div className={denseMode ? "desk-v2-actionbar flex items-center justify-between rounded-xl border bg-white px-3 py-2 shadow-sm" : "flex items-center justify-between rounded-xl border bg-white px-4 py-3 shadow-sm"}>
         <div className="flex items-center gap-3">
           <div className="h-9 w-9 rounded-lg bg-indigo-50 flex items-center justify-center">
             <Mail className="h-5 w-5 text-indigo-600" />
           </div>
           <div>
-            <h1 className="text-xl font-semibold text-slate-900">
+            <h1 className={denseMode ? "text-lg font-semibold text-slate-900" : "text-xl font-semibold text-slate-900"}>
               Tickets Workspace
             </h1>
             <p className="text-xs text-slate-500">
@@ -769,7 +775,7 @@ const Tickets = () => {
       </div>
 
       {/* Search and Filters */}
-      <div className="rounded-xl border bg-white px-4 py-3 shadow-sm">
+      <div className={denseMode ? "desk-v2-actionbar rounded-xl border bg-white px-3 py-2 shadow-sm" : "rounded-xl border bg-white px-4 py-3 shadow-sm"}>
         <div className="flex flex-col md:flex-row gap-3">
           <div className="flex-1">
             <div className="relative">
@@ -799,7 +805,7 @@ const Tickets = () => {
       </div>
 
       {/* Tabs */}
-      <div className="rounded-xl border bg-white px-4 pt-3 pb-1 shadow-sm">
+      <div className={denseMode ? "desk-v2-actionbar rounded-xl border bg-white px-3 pt-2 pb-1 shadow-sm" : "rounded-xl border bg-white px-4 pt-3 pb-1 shadow-sm"}>
         <nav className="-mb-px flex space-x-6">
           <button
             onClick={() => setSearchParams({ status: "open" })}

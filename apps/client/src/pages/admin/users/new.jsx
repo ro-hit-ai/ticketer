@@ -15,10 +15,6 @@ const NewUser = () => {
   const { user, fetchWithAuth } = useUser();
   const navigate = useNavigate();
 
-  useEffect(() => {
-    console.trace(`CreateUser rendered. userId=${user?._id}, isLoading=${isLoading}, auth=${auth}`);
-  }, [user?._id, isLoading, auth]);
-
   async function checkAuth() {
     try {
       const response = await fetchWithAuth("/v1/auth/check", {

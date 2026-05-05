@@ -7,7 +7,6 @@ const axios = require('axios');
 const crypto = require('crypto');
 const { generators } = require('openid-client');
 const { AuthorizationCode } = require('simple-oauth2');
-const redisClient = require('../lib/redisClient'); // Adjust path as needed
 const { getJwtSecret } = require('../lib/jwtSecret');
 
 // Import custom utilities and Mongoose models
@@ -258,14 +257,8 @@ router.get('/check', async (req, res) => {
   const codeChallenge = generators.codeChallenge(codeVerifier);
   const state = generators.state();
 
-  // ✅ NEW: Store in Redis with 5-minute expiration
-  await redisClient.setEx(
-    `oidc:state:${state}`, // Use a namespaced key
-    5 * 60, // 5 minutes in seconds (matches your LRU TTL)
-    JSON.stringify({ codeVerifier }) // Must stringify the object
-  );
-  
-   console.log(`[OIDC START] Stored state ${state} in Redis`); // Debug log
+  cache.set(state, { codeVerifier }, options.ttl);
+  console.log(`[OIDC START] Stored state ${state} in memory cache`);
 
   const url = oidcClient.authorizationUrl({
     scope: "openid email profile",
@@ -308,35 +301,25 @@ router.get('/oidc/callback', async (req, res) => {
     if (params.iss === "undefined") {
       params.iss = oidc.issuer.replace(/\/\.well-known\/openid-configuration$/, "/");
     }
-    
     const state = params.state;
-    console.log('[OIDC CALLBACK] Looking for state in Redis:', state); // Debug log
+    console.log('[OIDC CALLBACK] Looking for state in memory cache:', state);
+    const sessionData = cache.get(state);
 
-    // ✅ Read from Redis instead of in-memory cache
-    const sessionDataString = await redisClient.get(`oidc:state:${state}`);
-    
-    if (!sessionDataString) {
-      console.error('[OIDC CALLBACK] State not found in Redis:', state);
-      // Optional: Check if it's in the old cache for debugging
-      const oldCacheData = cache.get(state);
-      console.log('[OIDC CALLBACK] Value in old cache:', oldCacheData);
+    if (!sessionData) {
+      console.error('[OIDC CALLBACK] State not found in memory cache:', state);
       return res.status(400).send("Invalid or expired session");
     }
-    
-    // ✅ Parse the JSON data from Redis
-    const sessionData = JSON.parse(sessionDataString);
+
     const { codeVerifier } = sessionData;
-    console.log('[OIDC CALLBACK] Found codeVerifier in Redis'); // Debug log
+    console.log('[OIDC CALLBACK] Found codeVerifier in memory cache');
 
     if (!codeVerifier) {
       console.error('[OIDC CALLBACK] No codeVerifier found for state:', state);
       return res.status(400).send("Invalid or expired session");
     }
 
-    // ✅ Immediately delete from Redis after reading
-    await redisClient.del(`oidc:state:${state}`);
-    console.log('[OIDC CALLBACK] Deleted state from Redis:', state); // Debug log
-
+    cache.delete(state);
+    console.log('[OIDC CALLBACK] Deleted state from memory cache:', state);
     let tokens = await oidcClient.callback(
       oidc.redirectUri,
       params,
@@ -638,3 +621,5 @@ router.delete('/sessions/:sessionId', async (req, res) => {
 });
 
 module.exports = router;
+
+

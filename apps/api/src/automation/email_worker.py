@@ -2,32 +2,27 @@
 # -*- coding: utf-8 -*-
 
 """
-EMAIL PRIORITY WORKER (Python 3.14 SAFE)
+EMAIL PRIORITY WORKER
 
 - MongoDB = source of truth
-- Redis (RQ) = async queue
-- Producer-only process
+- Direct DB scan + processing
 - Locking + retry + dead-letter
 """
 
-from __future__ import annotations  # ✅ Python 3.14 safe typing
+from __future__ import annotations
 
 import sys
 import io
 import os
 import time
-import traceback
 import logging
 from datetime import datetime
-from typing import Optional
 
 import pymongo
-import redis
-from rq import Queue
 from textblob import TextBlob
 
 # -------------------------------------------------
-# 0. WINDOWS UTF-8 FIX (SAFE)
+# 0. WINDOWS UTF-8 FIX
 # -------------------------------------------------
 if sys.platform == "win32":
     try:
@@ -38,7 +33,7 @@ if sys.platform == "win32":
         pass
 
 # -------------------------------------------------
-# 1. LOGGING (Python 3.14 compatible)
+# 1. LOGGING
 # -------------------------------------------------
 os.makedirs("logs", exist_ok=True)
 
@@ -52,7 +47,7 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger("email-worker")
-logger.info("🚀 Email Priority Worker starting")
+logger.info("Email Priority Worker starting")
 
 # -------------------------------------------------
 # 2. DATABASE CONNECTIONS
@@ -63,28 +58,10 @@ db = mongo["peppermint"]
 emails_col = db["emailmessages"]
 tickets_col = db["tickets"]
 
-logger.info("✅ Connected to MongoDB")
+logger.info("Connected to MongoDB")
 
 # -------------------------------------------------
-# 3. REDIS QUEUE (PRODUCER SIDE)
-# -------------------------------------------------
-redis_conn = redis.Redis(
-    host="localhost",
-    port=6379,
-    db=0,
-    decode_responses=True,
-)
-
-email_queue = Queue(
-    name="email_priority",
-    connection=redis_conn,
-    default_timeout=300,
-)
-
-logger.info("✅ Connected to Redis (RQ)")
-
-# -------------------------------------------------
-# 4. PRIORITY DETECTION (UNCHANGED LOGIC)
+# 3. PRIORITY DETECTION
 # -------------------------------------------------
 def detect_priority(subject: str, body: str = "") -> str:
     text = f"{subject} {body}".lower().strip()
@@ -115,15 +92,11 @@ def detect_priority(subject: str, body: str = "") -> str:
     except Exception:
         return "low"
 
+
 # -------------------------------------------------
-# 5. CORE EMAIL PROCESSOR (EXECUTED BY RQ WORKERS)
+# 4. CORE EMAIL PROCESSOR
 # -------------------------------------------------
 def process_email(email_id):
-    """
-    This function is executed by RQ CONSUMER workers
-    """
-
-    # 🔒 Atomic lock
     lock = emails_col.update_one(
         {
             "_id": email_id,
@@ -134,7 +107,7 @@ def process_email(email_id):
     )
 
     if lock.modified_count == 0:
-        logger.info(f"🔁 Skipped (locked/dead): {email_id}")
+        logger.info(f"Skipped (locked/dead): {email_id}")
         return
 
     try:
@@ -171,11 +144,10 @@ def process_email(email_id):
                 },
             )
 
-        logger.info(f"✅ Email {email_id} → {new_priority}")
+        logger.info(f"Email {email_id} -> {new_priority}")
 
     except Exception as exc:
-        logger.error(f"❌ Failed email {email_id}: {exc}")
-        logger.error(traceback.format_exc())
+        logger.error(f"Failed email {email_id}: {exc}")
 
         emails_col.update_one(
             {"_id": email_id},
@@ -196,19 +168,19 @@ def process_email(email_id):
                     }
                 },
             )
-            logger.error(f"☠️ Dead-lettered email: {email_id}")
+            logger.error(f"Dead-lettered email: {email_id}")
 
     finally:
-        # 🔓 Always release lock
         emails_col.update_one(
             {"_id": email_id},
             {"$unset": {"analysis_lock": ""}},
         )
 
+
 # -------------------------------------------------
-# 6. PRODUCER: SCAN DB → ENQUEUE JOBS
+# 5. MAIN LOOP: SCAN DB -> PROCESS
 # -------------------------------------------------
-def enqueue_pending_emails() -> None:
+def process_pending_emails() -> None:
     pending = list(
         emails_col.find(
             {
@@ -227,31 +199,28 @@ def enqueue_pending_emails() -> None:
         return
 
     for email in pending:
-        email_queue.enqueue(
-            process_email,
-            email["_id"],
-            retry=3,
-            job_timeout=300,
-        )
+        process_email(email["_id"])
 
-    logger.info(f"📤 Enqueued {len(pending)} emails")
+    logger.info(f"Processed {len(pending)} emails")
+
 
 # -------------------------------------------------
-# 7. MAIN LOOP (PRODUCER MODE)
+# 6. MAIN LOOP
 # -------------------------------------------------
-def run_producer() -> None:
-    logger.info("🟢 Producer running (DB → Redis)")
+def run_worker() -> None:
+    logger.info("Worker running (DB scan -> direct processing)")
     while True:
-        enqueue_pending_emails()
+        process_pending_emails()
         time.sleep(5)
 
+
 # -------------------------------------------------
-# 8. ENTRY POINT
+# 7. ENTRY POINT
 # -------------------------------------------------
 if __name__ == "__main__":
     try:
-        run_producer()
+        run_worker()
     except KeyboardInterrupt:
-        logger.info("🛑 Producer stopped")
+        logger.info("Worker stopped")
     finally:
         mongo.close()

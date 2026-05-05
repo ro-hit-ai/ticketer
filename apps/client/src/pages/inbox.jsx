@@ -19,9 +19,11 @@ import {
   Flag,
   Send,
   MoreHorizontal,
+  MessageSquare,
 } from "lucide-react";
 import { toast } from "react-toastify";
 import { useUser } from "../store/session.jsx";
+import { createOrOpenThread } from "../services/communication.service";
 import {
   Dialog,
   DialogContent,
@@ -70,6 +72,141 @@ function extractTicketIdFromSubject(subject) {
   return match?.[1] || null;
 }
 
+function extractSourceCaseIdFromEmail(email) {
+  const direct =
+    email?.sourceCaseId ||
+    email?.metadata?.sourceCaseId ||
+    email?.metadata?.applicationId ||
+    null;
+  if (typeof direct === "string" && direct.trim()) {
+    return direct.trim().toUpperCase();
+  }
+
+  const subject = String(email?.subject || "");
+  const appMatch = subject.match(/\b(APP-[A-Z0-9-]{6,})\b/i);
+  if (appMatch?.[1]) {
+    return appMatch[1].toUpperCase();
+  }
+
+  return null;
+}
+
+function decodeHtmlEntities(value) {
+  if (typeof window === "undefined") return value;
+  const textArea = document.createElement("textarea");
+  textArea.innerHTML = value;
+  return textArea.value;
+}
+
+function cleanEmailBody(rawBody) {
+  const html = String(rawBody || "");
+  if (!html.trim()) return "No content";
+
+  const normalized = html
+    .replace(/<\s*br\s*\/?>/gi, "\n")
+    .replace(/<\/p>/gi, "\n")
+    .replace(/<\/div>/gi, "\n")
+    .replace(/<\/li>/gi, "\n")
+    .replace(/<\/tr>/gi, "\n")
+    .replace(/<li[^>]*>/gi, "")
+    .replace(/<[^>]+>/g, " ");
+
+  const decoded = decodeHtmlEntities(normalized)
+    .replace(/\r\n/g, "\n")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n");
+
+  const lines = decoded
+    .split("\n")
+    .map((line) =>
+      line
+        .replace(/^\s*[•·▪◦●○\-*]+\s*/g, "")
+        .replace(/\s+/g, " ")
+        .trim()
+    )
+    .filter((line, index, arr) => !(line === "" && arr[index - 1] === ""));
+
+  return lines.join("\n").trim() || "No content";
+}
+
+function renderInboxBody(rawBody, showQuoted, onToggleQuoted) {
+  const text = cleanEmailBody(rawBody);
+  const lines = text.split("\n");
+  const blocks = [];
+  let regular = [];
+  let quoted = [];
+
+  const flushRegular = () => {
+    if (regular.length) {
+      blocks.push({ type: "regular", value: regular.join("\n").trim() });
+      regular = [];
+    }
+  };
+  const flushQuoted = () => {
+    if (quoted.length) {
+      blocks.push({
+        type: "quoted",
+        value: quoted
+          .map((line) => line.replace(/^\s*>+\s?/, ""))
+          .join("\n")
+          .trim(),
+      });
+      quoted = [];
+    }
+  };
+
+  lines.forEach((line) => {
+    if (/^\s*>/.test(line)) {
+      flushRegular();
+      quoted.push(line);
+    } else {
+      flushQuoted();
+      regular.push(line);
+    }
+  });
+  flushRegular();
+  flushQuoted();
+
+  return blocks.map((block, index) => {
+    if (!block.value) return null;
+    if (block.type === "quoted") {
+      if (!showQuoted) {
+        return (
+          <div key={`quoted-collapsed-${index}`} className="mt-3 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+            <button
+              type="button"
+              onClick={onToggleQuoted}
+              className="font-semibold text-slate-700 hover:text-slate-900"
+            >
+              Show previous message
+            </button>
+          </div>
+        );
+      }
+      return (
+        <div key={`quoted-${index}`} className="mt-3 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+          <div className="mb-1 flex items-center justify-between gap-2">
+            <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">Previous message</span>
+            <button
+              type="button"
+              onClick={onToggleQuoted}
+              className="text-[11px] font-semibold text-slate-600 hover:text-slate-900"
+            >
+              Hide
+            </button>
+          </div>
+          <div className="whitespace-pre-wrap">{block.value}</div>
+        </div>
+      );
+    }
+    return (
+      <p key={`regular-${index}`} className="whitespace-pre-wrap leading-6 text-slate-800">
+        {block.value}
+      </p>
+    );
+  });
+}
+
 const Inbox = () => {
   const { fetchWithAuth, imap_enabled, loading: sessionLoading } =
     useUser();
@@ -103,6 +240,7 @@ const Inbox = () => {
   const [priorityValue, setPriorityValue] = useState("Medium");
   const [internalNotes, setInternalNotes] = useState("");
   const [moreActionsOpen, setMoreActionsOpen] = useState(false);
+  const [showQuotedContent, setShowQuotedContent] = useState(false);
 
   const searchTimeoutRef = useRef(null);
 
@@ -445,6 +583,7 @@ const Inbox = () => {
 
     setInternalNotes(selectedEmail.internalNotes || "");
     setMoreActionsOpen(false);
+    setShowQuotedContent(false);
   }, [selectedEmail]);
 
   const pages = Math.ceil(total / limit);
@@ -564,6 +703,32 @@ const Inbox = () => {
       navigate(`/portal/tickets/${resolvedTicketId}`);
     },
     [handleMarkRead, navigate]
+  );
+
+  const openThreadFromEmail = useCallback(
+    async (email) => {
+      const sourceCaseId = extractSourceCaseIdFromEmail(email);
+      if (!sourceCaseId) {
+        toast.info("No application ID found on this email yet. Once linked, you can open its thread.");
+        return;
+      }
+
+      try {
+        const { thread } = await createOrOpenThread(fetchWithAuth, { sourceCaseId });
+        if (!thread?._id) {
+          throw new Error("Thread was not returned");
+        }
+
+        if (!email?.isRead && email?._id) {
+          handleMarkRead(email._id, true);
+        }
+
+        navigate(`/portal/messages?threadId=${thread._id}`);
+      } catch (error) {
+        toast.error(error.message || "Failed to open thread");
+      }
+    },
+    [fetchWithAuth, handleMarkRead, navigate]
   );
 
   if (sessionLoading) {
@@ -854,6 +1019,13 @@ const Inbox = () => {
                         Reply
                       </button>
                       <button
+                        onClick={() => openThreadFromEmail(selectedEmail)}
+                        className="inline-flex items-center rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-700 hover:bg-emerald-100"
+                      >
+                        <MessageSquare className="mr-2 h-4 w-4" />
+                        Open Thread
+                      </button>
+                      <button
                         onClick={() => handleMarkRead(selectedEmail._id, !selectedEmail.isRead)}
                         className="inline-flex items-center rounded-md border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
                       >
@@ -893,16 +1065,25 @@ const Inbox = () => {
                       >
                         Open Ticket
                       </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          openThreadFromEmail(selectedEmail);
+                          setMoreActionsOpen(false);
+                        }}
+                        className="inline-flex items-center rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                      >
+                        Open Thread
+                      </button>
                     </div>
                   ) : null}
 
-                  <div className="prose prose-sm max-w-none text-slate-800">
-                    <div
-                      className="whitespace-pre-wrap break-words"
-                      dangerouslySetInnerHTML={{
-                        __html: selectedEmail.body || "<p>No content</p>",
-                      }}
-                    />
+                  <div className="max-w-none space-y-3 text-sm text-slate-800">
+                    {renderInboxBody(
+                      selectedEmail.body,
+                      showQuotedContent,
+                      () => setShowQuotedContent((prev) => !prev)
+                    )}
                   </div>
 
                   {selectedEmail.attachments && selectedEmail.attachments.length > 0 ? (
