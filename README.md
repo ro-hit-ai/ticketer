@@ -1,97 +1,163 @@
-<h1 align="center">🌿 Welcome to MintLeaf Ticket Management 🎫</h1>
-<p align="center">
-  <em>A Fresh Approach to Helpdesk Management</em>
-</p>
+# Ticketer
 
-<p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-1.0.0-2ecc71.svg?style=for-the-badge" />
-  <img alt="License" src="https://img.shields.io/badge/license-MIT-3498db.svg?style=for-the-badge" />
-  <img alt="PRs Welcome" src="https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=for-the-badge" />
-</p>
+Full-stack ticketing and communication platform with:
+- `apps/api`: Node.js + Express + MongoDB backend
+- `apps/client`: React + Vite admin/agent/portal frontend
 
-<p align="center">
-  <img src="./static/logo.svg" alt="MintLeaf Logo" height="120px" width="120px">
-</p>
+## Core Features
 
-<p align="center">
-  <a href="https://github.com/ro-hit-ai/MintLeaf/stargazers">
-    <img alt="GitHub Stars" src="https://img.shields.io/github/stars/ro-hit-ai/MintLeaf?style=social&logo=github">
-  </a>
-  <a href="https://github.com/ro-hit-ai/MintLeaf/fork">
-    <img alt="GitHub Forks" src="https://img.shields.io/github/forks/ro-hit-ai/MintLeaf?style=social&logo=git">
-  </a>
-  <img src="https://img.shields.io/docker/pulls/rohitreddy/mintleaf?logo=docker" />
-</p>
+- Ticket and thread management
+- Inbound/outbound email flows (IMAP + SMTP)
+- Role and permission based access
+- Mailbox and queue administration
+- Admin operations views (threads, messages, logs)
 
-<p align="center">🚀 <strong>Powered by Cutting-Edge Technology</strong></p>
-<p align="center">
-  <a href="https://reactjs.org/">
-    <img src="https://img.shields.io/badge/React-20232A?logo=react&logoColor=61DAFB" alt="React">
-  </a>
-  <a href="https://nodejs.org/">
-    <img src="https://img.shields.io/badge/Node.js-339933?logo=nodedotjs&logoColor=white" alt="Node.js">
-  </a>
-  <a href="https://www.docker.com/">
-    <img src="https://img.shields.io/badge/Docker-2496ED?logo=docker&logoColor=white" alt="Docker">
-  </a>
-  <a href="https://www.postgresql.org/">
-    <img src="https://img.shields.io/badge/PostgreSQL-4169E1?logo=postgresql&logoColor=white" alt="PostgreSQL">
-  </a>
-</p>
+## Mailer Reliability Features (Implemented)
 
-> 🍃 **MintLeaf** - A refreshing, modern ticket management system designed to streamline helpdesk operations with elegance and efficiency.
+- Outbound job queue with retry/backoff and dead-letter handling
+- Worker-based async email delivery
+- Delivery audit events:
+  - `job_enqueued`
+  - `job_retry`
+  - `job_dead`
+  - `job_sent`
+- Monitoring metrics and latency percentiles
+- Admin Mailer Ops page with dead-letter retry actions
+- Audit Explorer with filter + pagination support
 
-## ✨ **Why Choose MintLeaf?**
+## Tech Stack
 
-| Feature | Benefit |
-|---------|---------|
-| 🎨 **Modern UI/UX** | Clean, intuitive interface that delights users |
-| ⚡ **Lightning Fast** | Optimized performance for quick ticket resolution |
-| 🔒 **Secure by Design** | Built with security best practices in mind |
-| 📱 **Fully Responsive** | Works seamlessly on desktop, tablet, and mobile |
+- Backend: Node.js, Express, Mongoose, Nodemailer, IMAP libraries
+- Frontend: React, Vite, Tailwind, Recharts
+- Database: MongoDB
 
-## 🚀 **Quick Start**
+## Project Structure
 
-### **🐳 Docker Deployment (Recommended)**
-```yaml
-version: "3.8"
-services:
-  mintleaf-db:
-    image: postgres:15-alpine
-    container_name: mintleaf_postgres
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: mintleaf
-      POSTGRES_PASSWORD: your_secure_password
-      POSTGRES_DB: mintleaf
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    networks:
-      - mintleaf-network
+```text
+ticketer/
+  apps/
+    api/       # Backend API
+    client/    # Frontend app
+  docs/
+```
 
-  mintleaf-app:
-    image: rohitreddy/mintleaf:latest
-    container_name: mintleaf_app
-    restart: unless-stopped
-    ports:
-      - "3000:3000"
-      - "5003:5003"
-    environment:
-      DB_HOST: mintleaf-db
-      DB_PORT: 5432
-      DB_NAME: mintleaf
-      DB_USER: mintleaf
-      DB_PASSWORD: your_secure_password
-      JWT_SECRET: your_jwt_secret_here
-      NODE_ENV: production
-    depends_on:
-      - mintleaf-db
-    networks:
-      - mintleaf-network
+## Prerequisites
 
-volumes:
-  postgres_data:
+- Node.js 18+ recommended
+- npm 9+ (or compatible)
+- MongoDB instance
 
-networks:
-  mintleaf-network:
-    driver: bridge
+## Local Setup
+
+### 1) Clone and install
+
+```bash
+git clone <your-repo-url>
+cd ticketer
+```
+
+Install dependencies per app:
+
+```bash
+cd apps/api && npm install
+cd ../client && npm install
+```
+
+### 2) Configure backend environment
+
+Create `apps/api/.env` (or update existing) with at least:
+
+```env
+PORT=5005
+MONGODB_URI=mongodb://localhost:27017/peppermint
+JWT_SECRET=change_me
+
+# Optional but common
+CORS_ALLOWED_ORIGINS=http://localhost:5173
+SEED_ADMIN_ON_STARTUP=false
+
+# Email queue worker (defaults shown)
+OUTBOUND_EMAIL_WORKER_ENABLED=true
+OUTBOUND_EMAIL_QUEUE_POLL_MS=3000
+OUTBOUND_EMAIL_QUEUE_LOCK_MS=60000
+OUTBOUND_EMAIL_MAX_ATTEMPTS=5
+```
+
+### 3) Run backend
+
+```bash
+cd apps/api
+npm run dev
+```
+
+Backend default URL: `http://localhost:5005`
+
+### 4) Run frontend
+
+```bash
+cd apps/client
+npm run dev
+```
+
+Frontend default URL: `http://localhost:5173`
+
+## Build Commands
+
+### Backend
+
+```bash
+cd apps/api
+npm start
+```
+
+### Frontend
+
+```bash
+cd apps/client
+npm run build
+npm run preview
+```
+
+## Key API Endpoints (Mailer Ops)
+
+- `GET /api/v1/monitoring/mailer?windowHours=24`
+  - Returns totals, success/dead/retry counts, latency (`p50`, `p95`), hourly trends.
+- `GET /api/v1/email-queue/jobs?status=dead&limit=100`
+  - Fetch dead-letter jobs.
+- `POST /api/v1/email-queue/jobs/:id/retry`
+  - Requeue a failed/dead job.
+- `GET /api/v1/audit-logs`
+  - Filterable audit logs.
+  - Query params: `eventType`, `entityType`, `entityId`, `startDate`, `endDate`, `page`, `limit`.
+
+## Admin UI Notes
+
+- Main admin routes are under `/admin/...`
+- Mailer reliability dashboard is at:
+  - `/admin/mailer-ops`
+- Message operations page:
+  - `/admin/messages`
+
+## Scripts (Backend)
+
+- `npm run dev` - Start API with nodemon
+- `npm start` - Start API with node
+- `npm run admin:create` - Create admin user helper
+- `npm run smoke:test` - Smoke test script
+- `npm run migrate:email-body-text` - Data migration script
+
+## Troubleshooting
+
+- If login/API calls fail with 401:
+  - verify `JWT_SECRET`
+  - verify frontend is using correct API base URL
+- If CORS issues occur:
+  - set `CORS_ALLOWED_ORIGINS` to frontend origin(s)
+- If emails are not sending:
+  - verify active email queue configuration
+  - check `/admin/mailer-ops` dead-letter and audit entries
+  - ensure worker is enabled (`OUTBOUND_EMAIL_WORKER_ENABLED=true`)
+
+## License
+
+MIT (see `license` file).
