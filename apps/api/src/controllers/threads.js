@@ -521,16 +521,18 @@ router.get('/:id/full', requirePermission([]), async (req, res) => {
 
     const messages = await Message.find({ threadId: req.params.id }).sort({ createdAt: 1 });
     const workflow = await resolveThreadWorkflowSnapshot(thread, req);
+    const storedWorkflowSnapshot = thread?.metadata?.workflowSnapshot || thread?.metadata?.workflow_snapshot || null;
+    const effectiveWorkflow = workflow || storedWorkflowSnapshot || null;
 
     let shouldSaveThread = false;
 
-    if (workflow) {
+    if (effectiveWorkflow) {
       thread.workflowSnapshot = {
-        currentUserId: workflow.ownerSummary?.validator?.userId || null,
-        currentUserName: workflow.ownerSummary?.validator?.name || null,
-        currentRole: workflow.currentStage || null,
+        currentUserId: effectiveWorkflow.ownerSummary?.validator?.userId || null,
+        currentUserName: effectiveWorkflow.ownerSummary?.validator?.name || null,
+        currentRole: effectiveWorkflow.currentStage || null,
         assignedAt: new Date(),
-        assignmentSource: 'PHP_SNAPSHOT',
+        assignmentSource: workflow ? 'PHP_SNAPSHOT' : 'STORED_SNAPSHOT',
       };
 
       if (thread.workflowSnapshot.currentUserId) {
@@ -540,8 +542,8 @@ router.get('/:id/full', requirePermission([]), async (req, res) => {
       shouldSaveThread = true;
     }
 
-    if (!thread.applicantEmail && workflow?.candidateEmail) {
-      const normalizedApplicantEmail = normalizeEmail(workflow.candidateEmail);
+    if (!thread.applicantEmail && effectiveWorkflow?.candidateEmail) {
+      const normalizedApplicantEmail = normalizeEmail(effectiveWorkflow.candidateEmail);
       if (normalizedApplicantEmail) {
         thread.applicantEmail = normalizedApplicantEmail;
         shouldSaveThread = true;
@@ -552,7 +554,7 @@ router.get('/:id/full', requirePermission([]), async (req, res) => {
       await thread.save();
     }
 
-    if (!workflow) {
+    if (!effectiveWorkflow) {
       console.warn('Workflow missing → using fallback', { sourceCaseId: thread.sourceCaseId });
       if (!thread.workflowSnapshot?.assignedAt && !thread.workflowSnapshot?.assignmentSource) {
         thread.workflowSnapshot = {
@@ -570,7 +572,7 @@ router.get('/:id/full', requirePermission([]), async (req, res) => {
       success: true,
       thread,
       messages,
-      workflow,
+      workflow: effectiveWorkflow,
     });
   } catch (error) {
     console.error('Error fetching full thread:', error);
@@ -609,10 +611,12 @@ router.get('/:id/workflow', requirePermission([]), async (req, res) => {
     }
 
     const workflow = await resolveThreadWorkflowSnapshot(thread, req);
+    const storedWorkflowSnapshot = thread?.metadata?.workflowSnapshot || thread?.metadata?.workflow_snapshot || null;
+    const effectiveWorkflow = workflow || storedWorkflowSnapshot || null;
 
     return res.json({
       success: true,
-      workflow,
+      workflow: effectiveWorkflow,
     });
   } catch (error) {
     console.error('Error fetching thread workflow:', error);
@@ -669,3 +673,4 @@ router.get('/:id', requirePermission([]), async (req, res) => {
 });
 
 module.exports = router;
+

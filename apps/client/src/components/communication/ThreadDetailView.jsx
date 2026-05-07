@@ -66,6 +66,8 @@ function normalizeWorkflowPayload(fullPayload, workflowPayload) {
     fullPayload?.workflow ||
     workflowPayload ||
     fullPayload?.thread?.workflowSnapshot ||
+    fullPayload?.thread?.metadata?.workflowSnapshot ||
+    fullPayload?.thread?.metadata?.workflow_snapshot ||
     fullPayload?.thread?.metadata?.workflow ||
     null;
 
