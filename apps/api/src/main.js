@@ -12,6 +12,7 @@ const { attachUser } = require('./lib/session');
 const { track } = require("./lib/hog");
 const { getEmails } = require("./lib/imap");
 const { OutboundEmailQueueService } = require("./lib/services/outboundEmailQueue.service");
+const { initializeContractConfig } = require("./lib/services/phpContractConfig.service");
 const { registerRoutes } = require("./routes"); // combined routes
 
 const corsOrigins = String(process.env.CORS_ALLOWED_ORIGINS || "")
@@ -99,8 +100,44 @@ function isExcludedRoute(req) {
   });
 }
 
+function isWorkflowPrincipal(user) {
+  return user?.isWorkflowPrincipal === true;
+}
+
+function isWorkflowPrincipalAllowedRoute(req) {
+  const cleanPath = req.path.replace(/\/+$/, '') || '/';
+  const method = req.method;
+
+  if (/^\/api\/v1\/threads(?:\/.*)?$/.test(cleanPath)) return true;
+  if (/^\/api\/v1\/messages(?:\/.*)?$/.test(cleanPath)) return true;
+
+  if (
+    method === 'GET' &&
+    /^\/api\/v1\/storage\/ticket\/[^/]+\/files$/.test(cleanPath)
+  ) {
+    return true;
+  }
+
+  if (
+    method === 'GET' &&
+    /^\/api\/v1\/storage\/file\/[^/]+\/(?:download|info)$/.test(cleanPath)
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
 // JWT middleware
 app.use((req, res, next) => {
+  if (isWorkflowPrincipal(req.user) && !isWorkflowPrincipalAllowedRoute(req)) {
+    return res.status(403).json({
+      success: false,
+      message: "Workflow principals can only access workflow communication routes",
+      reason: "WORKFLOW_ROUTE_NOT_ALLOWED",
+    });
+  }
+
   if (isExcludedRoute(req)) return next();
   if (req.user) return next();
   return res.status(401).json({ message: "Unauthorized", success: false });
@@ -138,6 +175,33 @@ async function seedAdmin() {
   }
 }
 
+function startEmailPolling(pollingIntervalMs) {
+  let stopped = false;
+  let timer = null;
+
+  const scheduleNext = () => {
+    if (stopped) return;
+    timer = setTimeout(runOnce, pollingIntervalMs);
+  };
+
+  const runOnce = async () => {
+    try {
+      await getEmails();
+    } catch (error) {
+      console.error("Email polling run failed:", error);
+    } finally {
+      scheduleNext();
+    }
+  };
+
+  runOnce();
+
+  return () => {
+    stopped = true;
+    if (timer) clearTimeout(timer);
+  };
+}
+
 
 // Start server function
 async function start() {
@@ -158,6 +222,8 @@ async function start() {
       await seedAdmin();
     }
 
+    await initializeContractConfig();
+
     const port = process.env.PORT || 5005;
     app.listen(port, () => {
       console.log(`🚀 Server listening on port ${port}`);
@@ -171,7 +237,7 @@ async function start() {
       const pollingEnabled = String(process.env.EMAIL_POLLING_ENABLED || "true").toLowerCase() === "true";
       if (pollingEnabled) {
         const pollingIntervalMs = Math.max(Number(process.env.EMAIL_POLLING_INTERVAL_MS || 10000), 5000);
-        setInterval(() => getEmails(), pollingIntervalMs);
+        startEmailPolling(pollingIntervalMs);
       }
 
       const worker = OutboundEmailQueueService.startWorker();

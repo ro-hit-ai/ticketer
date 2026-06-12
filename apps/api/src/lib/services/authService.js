@@ -1,6 +1,16 @@
 // services/authService.js
 const { google } = require("googleapis");
 const EmailQueue = require("../../models/EmailQueue");
+const { decryptSecret } = require("./secretField.service");
+
+function getTlsOptions(servername) {
+  const allowInsecureTls =
+    String(process.env.MAIL_ALLOW_INSECURE_TLS || 'false').toLowerCase() === 'true';
+  return {
+    rejectUnauthorized: !allowInsecureTls,
+    servername,
+  };
+}
 
 class AuthService {
 static async getValidAccessToken(queue) {
@@ -8,7 +18,11 @@ static async getValidAccessToken(queue) {
     throw new Error("Access token is only required for Gmail service type");
   }
 
-  if (!queue.refreshToken) {
+  const refreshToken = decryptSecret(queue.refreshToken);
+  const clientSecret = decryptSecret(queue.clientSecret);
+  const existingAccessToken = decryptSecret(queue.accessToken);
+
+  if (!refreshToken) {
     throw new Error("No refresh token found. Please re-authorize Gmail with prompt=consent");
   }
 
@@ -18,16 +32,16 @@ static async getValidAccessToken(queue) {
   // Setup OAuth2 client
   const oAuth2Client = new google.auth.OAuth2(
     queue.clientId,
-    queue.clientSecret,
+    clientSecret,
     queue.redirectUri
   );
 
   oAuth2Client.setCredentials({
-    refresh_token: queue.refreshToken,
+    refresh_token: refreshToken,
   });
 
   // Always refresh if expired
-  let token = queue.accessToken;
+  let token = existingAccessToken;
   if (!notExpired) {
     const newAccessToken = await oAuth2Client.getAccessToken();
     token = newAccessToken?.token || newAccessToken;
@@ -74,7 +88,7 @@ static async getEmailConfig(queue) {
       port: 993,
       tls: true,
       xoauth2,
-      tlsOptions: { rejectUnauthorized: false, servername: queue.hostname },
+      tlsOptions: getTlsOptions(queue.hostname),
     };
   }
 
@@ -89,11 +103,11 @@ static async getEmailConfig(queue) {
 
     return {
       user: queue.username,
-      password: queue.password,
+      password: decryptSecret(queue.password),
       host: queue.hostname,
       port: queue.tls ? 993 : 143,
       tls: queue.tls || false,
-      tlsOptions: { rejectUnauthorized: false, servername: queue.hostname },
+      tlsOptions: getTlsOptions(queue.hostname),
     };
   }
 

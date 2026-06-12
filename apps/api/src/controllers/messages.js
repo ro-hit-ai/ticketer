@@ -11,6 +11,12 @@ const { MailService } = require('../lib/services/smtp.service');
 const { OutboundEmailQueueService } = require('../lib/services/outboundEmailQueue.service');
 const emailTemplates = require('../utils/emailTemplates');
 const { fetchAssignedApplications } = require('../lib/services/phpAccessScope.service');
+const {
+  authorizeLane,
+  authorizeMessage,
+  extractLaneContext,
+  mergeAuthorizationDecision,
+} = require('../lib/services/phpAuthorizationClient.service');
 
 const router = express.Router();
 
@@ -53,6 +59,22 @@ function normalizeEmailList(values = []) {
   return Array.isArray(values)
     ? values.map((value) => normalizeEmail(value)).filter(Boolean)
     : [];
+}
+
+function normalizeSourceCaseId(value) {
+  return typeof value === 'string' && value.trim() ? value.trim().toUpperCase() : null;
+}
+
+function resolveWorkflowSourceCaseId(thread, metadata = {}, explicitValue = null) {
+  return (
+    normalizeSourceCaseId(thread?.sourceCaseId) ||
+    normalizeSourceCaseId(explicitValue) ||
+    normalizeSourceCaseId(metadata?.workflow?.applicationId) ||
+    normalizeSourceCaseId(metadata?.workflow?.sourceCaseId) ||
+    normalizeSourceCaseId(metadata?.applicationId) ||
+    normalizeSourceCaseId(metadata?.sourceCaseId) ||
+    null
+  );
 }
 
 function buildHtmlFromBody(body) {
@@ -99,12 +121,16 @@ function hasThreadOwnershipAccess(req, thread) {
   return ownerCandidates.includes(currentUserId);
 }
 
-async function ensureThreadAccess(req, thread) {
+async function ensureNodeThreadAccess(req, thread) {
   if (!thread) {
     return { allowed: false, statusCode: 404, message: 'Thread not found' };
   }
 
   if (isPrivilegedThreadAdmin(req?.user)) {
+    return { allowed: true, scope: null };
+  }
+
+  if (hasThreadOwnershipAccess(req, thread)) {
     return { allowed: true, scope: null };
   }
 
@@ -115,12 +141,8 @@ async function ensureThreadAccess(req, thread) {
   const scope = req._phpAccessScope;
   // Fail open if PHP scope is unavailable (missing cookie / PHP down). Threads.js uses the same behavior.
   if (!scope.applicationIds.length) {
-    console.warn('No scope → fallback allow');
-    return { allowed: true, scope: null };
-  }
-
-  if (hasThreadOwnershipAccess(req, thread)) {
-    return { allowed: true, scope: null };
+    console.warn('No PHP access scope found; denying thread access');
+    return { allowed: false, statusCode: 403, message: 'You do not have access to this thread' };
   }
 
   const sourceCaseId = typeof thread.sourceCaseId === 'string' ? thread.sourceCaseId.trim().toUpperCase() : null;
@@ -129,6 +151,76 @@ async function ensureThreadAccess(req, thread) {
   }
 
   return { allowed: true, scope: null };
+}
+
+async function ensureThreadAccess(req, thread, accessType = 'read') {
+  if (!thread) {
+    return { allowed: false, statusCode: 404, message: 'Thread not found' };
+  }
+
+  const nodeDecision = await ensureNodeThreadAccess(req, thread);
+  const laneContext = extractLaneContext(thread);
+  const phpDecision = await authorizeLane(req, {
+    ...laneContext,
+    accessType,
+  });
+
+  const decision = mergeAuthorizationDecision({
+    nodeDecision,
+    phpDecision,
+    shadowLog: {
+      userId: String(req?.user?._id || req?.user?.id || '').trim() || null,
+      applicationId: laneContext.applicationId,
+      componentKey: laneContext.componentKey,
+      ownerRole: laneContext.ownerRole,
+      threadId: laneContext.threadId,
+      accessType,
+    },
+  });
+
+  return decision.allowed
+    ? { allowed: true, scope: null }
+    : {
+        allowed: false,
+        statusCode: nodeDecision.statusCode || 403,
+        message: phpDecision.reason || nodeDecision.message || 'You do not have access to this thread',
+        scope: null,
+      };
+}
+
+async function filterAuthorizedMessages(req, thread, messages, laneAccess) {
+  const laneContext = extractLaneContext(thread);
+  const authorized = [];
+
+  for (const message of messages) {
+    const messageId = String(message.externalMessageId || message._id || '').trim() || null;
+    const phpDecision = await authorizeMessage(req, {
+      ...laneContext,
+      messageId,
+      sourceMessageKey: message.emailMessageId ? String(message.emailMessageId) : null,
+      accessType: 'read',
+    });
+
+    const decision = mergeAuthorizationDecision({
+      nodeDecision: laneAccess,
+      phpDecision,
+      shadowLog: {
+        userId: String(req?.user?._id || req?.user?.id || '').trim() || null,
+        applicationId: laneContext.applicationId,
+        componentKey: laneContext.componentKey,
+        ownerRole: laneContext.ownerRole,
+        threadId: laneContext.threadId,
+        messageId,
+        accessType: 'read',
+      },
+    });
+
+    if (decision.allowed) {
+      authorized.push(message);
+    }
+  }
+
+  return authorized;
 }
 
 async function resolveOutboundQueue(thread, explicitMailboxId) {
@@ -359,6 +451,7 @@ router.post('/', requirePermission([]), async (req, res) => {
         ? emailTemplates.buildSubject(thread, template.subject)
         : thread.subject || emailTemplates.buildSubject(thread, template.subject);
     const baseMetadata = req.body.metadata && typeof req.body.metadata === 'object' ? req.body.metadata : {};
+    const resolvedSourceCaseId = resolveWorkflowSourceCaseId(thread, baseMetadata, req.body.sourceCaseId);
     const sentByUserId = stringifyUserId(sender.id || sender._id || null);
     const sentByRole = thread.workflowSnapshot?.currentRole || null;
     const requestedRecipientUserId = stringifyUserId(req.body.recipientUserId || null);
@@ -406,10 +499,10 @@ router.post('/', requirePermission([]), async (req, res) => {
       const { queue, mailbox } = await resolveOutboundQueue(thread, mailboxId);
       const approvedSender = resolveApprovedSenderIdentity({ sender, queue, mailbox });
       const htmlBody = resolvedBodyHtml || buildHtmlFromBody(messageBody);
-      const outboundHeaders = thread.sourceCaseId
+      const outboundHeaders = resolvedSourceCaseId
         ? {
-            'X-Application-Id': thread.sourceCaseId,
-            'X-SourceCaseId': thread.sourceCaseId,
+            'X-Application-Id': resolvedSourceCaseId,
+            'X-SourceCaseId': resolvedSourceCaseId,
             'X-Thread-Id': String(thread._id),
           }
         : {};
@@ -418,7 +511,7 @@ router.post('/', requirePermission([]), async (req, res) => {
         queueId: queue._id,
         mailboxId: resolvedMailboxId || mailbox?._id || null,
         threadId: thread._id,
-        sourceCaseId: thread.sourceCaseId || null,
+        sourceCaseId: resolvedSourceCaseId,
         senderName: approvedSender.name || null,
         senderEmail: approvedSender.email,
         to: resolvedRecipients.to,
@@ -443,7 +536,7 @@ router.post('/', requirePermission([]), async (req, res) => {
 
     const message = await Message.create({
       threadId,
-      sourceCaseId: thread.sourceCaseId || null,
+      sourceCaseId: resolvedSourceCaseId,
       ticketId: effectiveTicketId,
       mailboxId: resolvedMailboxId,
       direction,
@@ -573,7 +666,9 @@ router.get('/:threadId', requirePermission([]), async (req, res) => {
       });
     }
 
-    const thread = await Thread.findById(req.params.threadId).select('sourceCaseId');
+    const thread = await Thread.findById(req.params.threadId).select(
+      'sourceCaseId componentKey metadata lastAssignedUserId workflowSnapshot createdBy claimedBy'
+    );
     if (!thread) {
       return res.status(404).json({
         success: false,
@@ -593,10 +688,11 @@ router.get('/:threadId', requirePermission([]), async (req, res) => {
     const messages = await Message.find({ threadId: req.params.threadId })
       .populate(messagePopulate)
       .sort({ createdAt: 1 });
+    const authorizedMessages = await filterAuthorizedMessages(req, thread, messages, access);
 
     return res.json({
       success: true,
-      messages,
+      messages: authorizedMessages,
     });
   } catch (error) {
     console.error('Error fetching messages:', error);

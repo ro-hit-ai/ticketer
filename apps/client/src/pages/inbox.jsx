@@ -23,7 +23,7 @@ import {
 } from "lucide-react";
 import { toast } from "react-toastify";
 import { useUser } from "../store/session.jsx";
-import { createOrOpenThread } from "../services/communication.service";
+import { getThreadBySourceCaseId } from "../services/communication.service";
 import {
   Dialog,
   DialogContent,
@@ -89,6 +89,14 @@ function extractSourceCaseIdFromEmail(email) {
   }
 
   return null;
+}
+
+function hasResolvableThreadLink(email) {
+  const explicitThreadId =
+    typeof email?.threadId === "string"
+      ? email.threadId
+      : (email?.threadId?._id || null);
+  return Boolean(explicitThreadId || extractSourceCaseIdFromEmail(email));
 }
 
 function decodeHtmlEntities(value) {
@@ -707,16 +715,31 @@ const Inbox = () => {
 
   const openThreadFromEmail = useCallback(
     async (email) => {
+      const explicitThreadId =
+        typeof email?.threadId === "string"
+          ? email.threadId
+          : (email?.threadId?._id || null);
+
+      if (explicitThreadId) {
+        if (!email?.isRead && email?._id) {
+          handleMarkRead(email._id, true);
+        }
+
+        navigate(`/portal/messages?threadId=${explicitThreadId}`);
+        return;
+      }
+
       const sourceCaseId = extractSourceCaseIdFromEmail(email);
       if (!sourceCaseId) {
-        toast.info("No application ID found on this email yet. Once linked, you can open its thread.");
+        toast.info("No linked thread was found for this email yet.");
         return;
       }
 
       try {
-        const { thread } = await createOrOpenThread(fetchWithAuth, { sourceCaseId });
+        const thread = await getThreadBySourceCaseId(fetchWithAuth, sourceCaseId);
         if (!thread?._id) {
-          throw new Error("Thread was not returned");
+          toast.info("No linked thread was found for this application yet.");
+          return;
         }
 
         if (!email?.isRead && email?._id) {
@@ -1020,7 +1043,8 @@ const Inbox = () => {
                       </button>
                       <button
                         onClick={() => openThreadFromEmail(selectedEmail)}
-                        className="inline-flex items-center rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-700 hover:bg-emerald-100"
+                        disabled={!hasResolvableThreadLink(selectedEmail)}
+                        className="inline-flex items-center rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-700 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
                       >
                         <MessageSquare className="mr-2 h-4 w-4" />
                         Open Thread
@@ -1071,7 +1095,8 @@ const Inbox = () => {
                           openThreadFromEmail(selectedEmail);
                           setMoreActionsOpen(false);
                         }}
-                        className="inline-flex items-center rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                        disabled={!hasResolvableThreadLink(selectedEmail)}
+                        className="inline-flex items-center rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:text-slate-400"
                       >
                         Open Thread
                       </button>

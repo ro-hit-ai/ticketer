@@ -66,6 +66,10 @@ function requirePermission(requiredPermissions, requireAll = true) {
         return next();
       }
 
+      if (req.user.isWorkflowPrincipal === true) {
+        return next();
+      }
+
       // Admin and wildcard bypass
       if (req.user.isAdmin || (Array.isArray(req.user.permissions) && req.user.permissions.includes('*'))) {
         return next();

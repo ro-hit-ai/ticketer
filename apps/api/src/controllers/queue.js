@@ -6,6 +6,7 @@ const EmailQueue = require('../models/EmailQueue');
 const OutboundEmailJob = require('../models/OutboundEmailJob');
 const { MailService } = require('../lib/services/smtp.service');
 const { emitAuditLog } = require('../lib/services/auditLog.service');
+const { decryptSecret } = require('../lib/services/secretField.service');
 
 const router = express.Router();
 
@@ -59,7 +60,7 @@ async function tracking(event, properties) {
   client.shutdownAsync();
 }
 
-router.post('/create', async (req, res) => {
+router.post('/create', requirePermission(['integration::manage']), async (req, res) => {
   try {
     const serviceType = String(req.body.serviceType || 'other').trim().toLowerCase();
     if (serviceType !== 'other' && serviceType !== 'custom') {
@@ -98,6 +99,7 @@ router.post('/create', async (req, res) => {
       name,
       username,
       hostname,
+      smtpHost: req.body.smtpHost || req.body.smtpHostname || process.env.SMTP_HOST || hostname,
       tls,
       serviceType: 'other',
       password: req.body.password || process.env.IMAP_PASS || process.env.SMTP_PASS || null,
@@ -140,7 +142,7 @@ router.get(
   async (req, res) => {
     try {
       const queues = await EmailQueue.find({})
-        .select('id name serviceType active teams username hostname imapPort smtpPort tls');
+        .select('id name serviceType active teams username hostname smtpHost imapPort smtpPort tls');
 
       res.status(200).send({
         success: true,
@@ -190,7 +192,7 @@ router.delete(
 
 // Test IMAP connection for a username/password based queue
 router.post('/test-connection',
-  //  requirePermission(['integration::manage']), 
+  requirePermission(['integration::manage']),
    async (req, res) => {
   try {
     const { queueId } = req.body;
@@ -201,12 +203,15 @@ router.post('/test-connection',
 
     const imapConfig = {
       user: queue.username,
-      password: queue.password,
+      password: decryptSecret(queue.password),
       host: queue.hostname,
       port: queue.imapPort || (queue.tls ? 993 : 143),
       tls: queue.tls || false,
       authTimeout: 30000,
-      tlsOptions: { rejectUnauthorized: false, servername: queue.hostname },
+      tlsOptions: {
+        rejectUnauthorized: String(process.env.MAIL_ALLOW_INSECURE_TLS || 'false').toLowerCase() !== 'true',
+        servername: queue.hostname,
+      },
     };
 
     const connection = await ImapSimple.connect({ imap: imapConfig });
@@ -233,7 +238,7 @@ router.post('/test-connection',
 });
 
 // Test SMTP connection for a queue
-router.post('/test-smtp-connection', async (req, res) => {
+router.post('/test-smtp-connection', requirePermission(['integration::manage']), async (req, res) => {
   try {
     const { queueId } = req.body;
     const queue = await EmailQueue.findById(queueId);

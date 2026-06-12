@@ -4,6 +4,10 @@ function normalizeSourceCaseId(value) {
   return typeof value === 'string' ? value.trim().toUpperCase() : value;
 }
 
+function normalizeComponentKey(value) {
+  return typeof value === 'string' ? value.trim().toLowerCase() : value;
+}
+
 const ALLOWED_ACTIVATION_TRIGGERS = new Set(['system_issue', 'agent', 'candidate_email', 'unknown']);
 
 const threadSchema = new mongoose.Schema(
@@ -13,6 +17,13 @@ const threadSchema = new mongoose.Schema(
       required: true,
       trim: true,
       set: normalizeSourceCaseId,
+    },
+    componentKey: {
+      type: String,
+      trim: true,
+      lowercase: true,
+      default: null,
+      set: normalizeComponentKey,
     },
     subject: {
       type: String,
@@ -139,6 +150,9 @@ threadSchema.pre('validate', function normalizeBeforeValidate(next) {
   if (this.sourceCaseId) {
     this.sourceCaseId = normalizeSourceCaseId(this.sourceCaseId);
   }
+  if (this.componentKey) {
+    this.componentKey = normalizeComponentKey(this.componentKey);
+  }
 
   // Clean up legacy/bad values so enum validation doesn't break unrelated saves.
   if (this.activationTrigger === null || this.activationTrigger === undefined || this.activationTrigger === '') {
@@ -150,7 +164,8 @@ threadSchema.pre('validate', function normalizeBeforeValidate(next) {
   next();
 });
 
-threadSchema.index({ sourceCaseId: 1 }, { unique: true });
+threadSchema.index({ sourceCaseId: 1, componentKey: 1 }, { unique: true });
+threadSchema.index({ sourceCaseId: 1 });
 threadSchema.index({ mailboxId: 1, updatedAt: -1 });
 threadSchema.index({ lastMessageAt: -1 });
 threadSchema.index({ ticketId: 1 }, { sparse: true });

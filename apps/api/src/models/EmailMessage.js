@@ -2,6 +2,7 @@ const mongoose = require("mongoose");
 
 const EmailMessageSchema = new mongoose.Schema({
   mailbox: { type: mongoose.Schema.Types.ObjectId, ref: "EmailQueue", required: true },
+  mailboxId: { type: mongoose.Schema.Types.ObjectId, ref: "Mailbox", default: null, index: true },
   threadId: { type: mongoose.Schema.Types.ObjectId, ref: "Thread", default: null, index: true },
   sourceCaseId: { type: String, trim: true, uppercase: true, default: null, index: true },
   direction: { type: String, enum: ["inbound", "outbound"], default: "inbound", index: true },
@@ -41,6 +42,7 @@ EmailMessageSchema.index(
   { unique: true, partialFilterExpression: { messageId: { $type: "string" } } }
 );
 EmailMessageSchema.index({ threadId: 1, date: -1 });
+EmailMessageSchema.index({ mailboxId: 1, date: -1 });
 EmailMessageSchema.index({ sourceCaseId: 1, date: -1 });
 EmailMessageSchema.index({ inReplyTo: 1 });
 EmailMessageSchema.index({ references: 1 });

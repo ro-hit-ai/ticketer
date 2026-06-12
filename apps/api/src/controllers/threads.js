@@ -5,8 +5,15 @@ const Thread = require('../models/Thread');
 const Message = require('../models/Message');
 const Ticket = require('../models/Ticket');
 const Mailbox = require('../models/Mailbox');
-const { fetchWorkflowSnapshot } = require('../lib/services/workflowSnapshot.service');
+const { fetchWorkflowSnapshot, pickWorkflowCurrentOwner } = require('../lib/services/workflowSnapshot.service');
 const { fetchAssignedApplications } = require('../lib/services/phpAccessScope.service');
+const {
+  authorizeLane,
+  authorizeMessage,
+  extractLaneContext,
+  isShadowModeEnabled,
+  mergeAuthorizationDecision,
+} = require('../lib/services/phpAuthorizationClient.service');
 
 const router = express.Router();
 
@@ -93,7 +100,7 @@ async function getCachedAccessScope(req) {
 
 
 async function buildThreadAccessQuery(user, req) {
-  if (!user) return {};
+  if (!user) return { _id: null };
   if (isPrivilegedThreadAdmin(user)) return {};
 
   const normalizedUserId = normalizeUserId(user?._id || user?.id);
@@ -126,17 +133,16 @@ async function buildThreadAccessQuery(user, req) {
       };
     }
 
-    console.warn("No scope found -> fallback to ALL threads");
-
-    return {};
+    console.warn("No PHP access scope found; limiting threads to explicit ownership only");
+    return ownershipConditions.length > 0 ? { $or: ownershipConditions } : { _id: null };
 
   } catch (err) {
     console.error("Scope fetch failed:", err);
-    return {};
+    return ownershipConditions.length > 0 ? { $or: ownershipConditions } : { _id: null };
   }
 }
 
-async function ensureThreadAccess(req, thread) {
+async function ensureNodeThreadAccess(req, thread) {
   if (!thread) {
     return {
       allowed: false,
@@ -149,16 +155,20 @@ async function ensureThreadAccess(req, thread) {
     return { allowed: true };
   }
 
+  if (hasThreadOwnershipAccess(req, thread)) {
+    return { allowed: true };
+  }
+
   const scope = await getCachedAccessScope(req);
 
   // ✅ IMPORTANT FIX
   if (!scope.applicationIds.length) {
-    console.warn("No scope → fallback allow");
-    return { allowed: true };
-  }
-
-  if (hasThreadOwnershipAccess(req, thread)) {
-    return { allowed: true };
+    console.warn("No PHP access scope found; denying thread access");
+    return {
+      allowed: false,
+      statusCode: 403,
+      message: 'You do not have access to this thread',
+    };
   }
 
   const normalizedSourceCaseId = normalizeSourceCaseId(thread.sourceCaseId);
@@ -172,6 +182,194 @@ async function ensureThreadAccess(req, thread) {
   }
 
   return { allowed: true };
+}
+
+async function ensureThreadAccess(req, thread, accessType = 'read') {
+  if (!thread) {
+    return {
+      allowed: false,
+      statusCode: 404,
+      message: "Thread not found",
+    };
+  }
+
+  const nodeDecision = await ensureNodeThreadAccess(req, thread);
+  const laneContext = extractLaneContext(thread, { accessType });
+  const phpDecision = await authorizeLane(req, {
+    ...laneContext,
+    accessType,
+  });
+
+  const decision = mergeAuthorizationDecision({
+    nodeDecision,
+    phpDecision,
+    shadowLog: {
+      userId: normalizeUserId(req?.user?._id || req?.user?.id),
+      applicationId: laneContext.applicationId,
+      componentKey: laneContext.componentKey,
+      ownerRole: laneContext.ownerRole,
+      threadId: laneContext.threadId,
+      accessType,
+    },
+  });
+
+  return decision.allowed
+    ? { allowed: true }
+    : {
+        allowed: false,
+        statusCode: phpDecision.statusCode || nodeDecision.statusCode || 403,
+        message: phpDecision.reason || nodeDecision.message || 'You do not have access to this thread',
+      };
+}
+
+async function ensureApplicationLaneAccess(req, applicationId, accessType = 'read') {
+  const normalizedApplicationId = normalizeSourceCaseId(applicationId);
+  if (!normalizedApplicationId) {
+    return {
+      allowed: false,
+      statusCode: 400,
+      message: 'sourceCaseId is required',
+    };
+  }
+
+  let nodeDecision = { allowed: true };
+  if (!isPrivilegedThreadAdmin(req?.user)) {
+    try {
+      const scope = await getCachedAccessScope(req);
+      nodeDecision =
+        scope.applicationIds.length && scope.applicationIds.includes(normalizedApplicationId)
+          ? { allowed: true }
+          : { allowed: false, statusCode: 403, message: 'You do not have access to this application' };
+    } catch (error) {
+      nodeDecision = {
+        allowed: false,
+        statusCode: 403,
+        message: 'You do not have access to this application',
+      };
+    }
+  }
+
+  const phpDecision = await authorizeLane(req, {
+    applicationId: normalizedApplicationId,
+    componentKey: null,
+    ownerRole: null,
+    threadId: null,
+    accessType,
+  });
+
+  const decision = mergeAuthorizationDecision({
+    nodeDecision,
+    phpDecision,
+    shadowLog: {
+      userId: normalizeUserId(req?.user?._id || req?.user?.id),
+      applicationId: normalizedApplicationId,
+      componentKey: null,
+      ownerRole: null,
+      threadId: null,
+      accessType,
+    },
+  });
+
+  return decision.allowed
+    ? { allowed: true }
+    : {
+        allowed: false,
+        statusCode: nodeDecision.statusCode || 403,
+        message: phpDecision.reason || nodeDecision.message || 'You do not have access to this application',
+      };
+}
+
+async function filterAuthorizedThreads(req, threads, nodeDecision = { allowed: true }) {
+  const authorized = [];
+
+  for (const thread of threads) {
+    const laneContext = extractLaneContext(thread);
+    const phpDecision = await authorizeLane(req, {
+      ...laneContext,
+      accessType: 'read',
+    });
+    const decision = mergeAuthorizationDecision({
+      nodeDecision,
+      phpDecision,
+      shadowLog: {
+        userId: normalizeUserId(req?.user?._id || req?.user?.id),
+        applicationId: laneContext.applicationId,
+        componentKey: laneContext.componentKey,
+        ownerRole: laneContext.ownerRole,
+        threadId: laneContext.threadId,
+        accessType: 'read',
+      },
+    });
+
+    if (decision.allowed) {
+      const {
+        componentKey,
+        metadata,
+        workflowSnapshot,
+        lastAssignedUserId,
+        createdBy,
+        claimedBy,
+        ...publicThread
+      } = thread;
+      authorized.push(publicThread);
+    }
+  }
+
+  return authorized;
+}
+
+async function filterAuthorizedMessages(req, thread, messages, laneAccess) {
+  const laneContext = extractLaneContext(thread);
+  const authorized = [];
+
+  for (const message of messages) {
+    const messageId = String(message.externalMessageId || message._id || '').trim() || null;
+    const phpDecision = await authorizeMessage(req, {
+      ...laneContext,
+      messageId,
+      sourceMessageKey: message.emailMessageId ? String(message.emailMessageId) : null,
+      accessType: 'read',
+    });
+    const decision = mergeAuthorizationDecision({
+      nodeDecision: laneAccess,
+      phpDecision,
+      shadowLog: {
+        userId: normalizeUserId(req?.user?._id || req?.user?.id),
+        applicationId: laneContext.applicationId,
+        componentKey: laneContext.componentKey,
+        ownerRole: laneContext.ownerRole,
+        threadId: laneContext.threadId,
+        messageId,
+        accessType: 'read',
+      },
+    });
+
+    if (decision.allowed) {
+      authorized.push(message);
+    }
+  }
+
+  return authorized;
+}
+
+function hasPhpLaneIdentifier(thread) {
+  return Boolean(extractLaneContext(thread).threadId);
+}
+
+function logMissingWorkflowLaneContext(req, route, context = {}) {
+  const laneContext = extractLaneContext(context.thread || {
+    sourceCaseId: context.sourceCaseId || null,
+  });
+  console.warn(JSON.stringify({
+    event: 'missing_workflow_lane_context',
+    route,
+    userId: normalizeUserId(req?.user?._id || req?.user?.id),
+    applicationId: laneContext.applicationId || normalizeSourceCaseId(context.sourceCaseId),
+    componentKey: laneContext.componentKey,
+    ownerRole: laneContext.ownerRole,
+    threadId: laneContext.threadId,
+    reason: context.reason || 'LANE_IDENTITY_REQUIRED',
+  }));
 }
 
 async function resolveThreadWorkflowSnapshot(thread, req = null) {
@@ -236,7 +434,22 @@ router.post('/', requirePermission([]), async (req, res) => {
     }
 
     const normalizedSourceCaseId = normalizeSourceCaseId(sourceCaseId);
-    const existing = await Thread.findOne({ sourceCaseId: normalizedSourceCaseId }).populate(threadPopulate);
+    const existingAccessCandidate = await Thread.findOne({ sourceCaseId: normalizedSourceCaseId })
+      .select('sourceCaseId lastAssignedUserId workflowSnapshot createdBy claimedBy')
+      .lean();
+    if (existingAccessCandidate) {
+      const access = await ensureThreadAccess(req, existingAccessCandidate);
+      if (!access.allowed) {
+        return res.status(access.statusCode || 403).json({
+          success: false,
+          message: access.message || 'You do not have access to this thread',
+        });
+      }
+    }
+
+    const existing = existingAccessCandidate
+      ? await Thread.findById(existingAccessCandidate._id).populate(threadPopulate)
+      : null;
     if (existing) {
       const requesterId = normalizeUserId(req.user?._id || req.user?.id);
       let shouldSaveExisting = false;
@@ -262,6 +475,16 @@ router.post('/', requirePermission([]), async (req, res) => {
       });
     }
 
+    if (!isPrivilegedThreadAdmin(req?.user)) {
+      const scope = await getCachedAccessScope(req);
+      if (!scope.applicationIds.length || !scope.applicationIds.includes(normalizedSourceCaseId)) {
+        return res.status(403).json({
+          success: false,
+          message: 'You do not have access to this thread',
+        });
+      }
+    }
+
     const thread = await Thread.create({
       sourceCaseId: normalizedSourceCaseId,
       subject: `Verification – ${normalizedSourceCaseId}`,
@@ -279,9 +502,21 @@ router.post('/', requirePermission([]), async (req, res) => {
     });
   } catch (error) {
     if (error?.code === 11000) {
-      const thread = await Thread.findOne({
+      const threadAccessCandidate = await Thread.findOne({
         sourceCaseId: normalizeSourceCaseId(req.body.sourceCaseId),
-      }).populate(threadPopulate);
+      }).select('sourceCaseId lastAssignedUserId workflowSnapshot createdBy claimedBy');
+
+      const access = await ensureThreadAccess(req, threadAccessCandidate);
+      if (!access.allowed) {
+        return res.status(access.statusCode || 403).json({
+          success: false,
+          message: access.message || 'You do not have access to this thread',
+        });
+      }
+
+      const thread = threadAccessCandidate
+        ? await Thread.findById(threadAccessCandidate._id).populate(threadPopulate)
+        : null;
 
       if (thread) {
         const requesterId = normalizeUserId(req.user?._id || req.user?.id);
@@ -300,15 +535,6 @@ router.post('/', requirePermission([]), async (req, res) => {
         if (shouldSaveThread) {
           await thread.save();
         }
-      }
-
-      const access = await ensureThreadAccess(req, thread);
-      if (!access.allowed) {
-        return res.status(access.statusCode).json({
-          success: false,
-          message: access.message,
-          ...(access.scope ? { scope: access.scope } : {}),
-        });
       }
 
       return res.status(200).json({
@@ -353,21 +579,23 @@ router.get('/', requirePermission([]), async (req, res) => {
     }
 
     const accessQuery = await buildThreadAccessQuery(req.user, req);
-    const finalQuery =
+    const nodeFinalQuery =
       Object.keys(accessQuery).length === 0
         ? query
         : Object.keys(query).length === 0
           ? accessQuery
           : { $and: [query, accessQuery] };
+    const candidateQuery = isShadowModeEnabled() ? nodeFinalQuery : query;
 
-    const threads = await Thread.find(finalQuery)
-      .select(inboxThreadFields)
+    const threads = await Thread.find(candidateQuery)
+      .select(`${inboxThreadFields} componentKey metadata workflowSnapshot lastAssignedUserId createdBy claimedBy`)
       .sort({ lastMessageAt: -1, updatedAt: -1 })
       .lean();
+    const authorizedThreads = await filterAuthorizedThreads(req, threads, { allowed: true });
 
     return res.json({
       success: true,
-      threads,
+      threads: authorizedThreads,
     });
   } catch (error) {
     console.error('Error fetching threads:', error);
@@ -391,9 +619,20 @@ router.get('/source/:sourceCaseId', requirePermission([]), async (req, res) => {
 
     const thread = await Thread.findOne({ sourceCaseId }).populate(threadPopulate);
     if (!thread) {
+      logMissingWorkflowLaneContext(req, 'GET /api/v1/threads/source/:sourceCaseId', {
+        sourceCaseId,
+        reason: 'THREAD_NOT_FOUND_FOR_SOURCE_CASE',
+      });
       return res.status(404).json({
         success: false,
         message: 'Thread not found',
+      });
+    }
+
+    if (!hasPhpLaneIdentifier(thread)) {
+      logMissingWorkflowLaneContext(req, 'GET /api/v1/threads/source/:sourceCaseId', {
+        sourceCaseId,
+        thread,
       });
     }
 
@@ -432,19 +671,15 @@ router.get('/source/:sourceCaseId/workflow', requirePermission([]), async (req, 
 
     const debugEnabled = req.query.debug === '1' || req.query.debug === 'true';
 
-    // Enforce PHP assignment scope for non-admin users even if the thread doesn't exist yet.
-    if (!isPrivilegedThreadAdmin(req?.user)) {
-      const scope = await getCachedAccessScope(req);
-      if (scope.applicationIds.length > 0 && !scope.applicationIds.includes(sourceCaseId)) {
-        return res.status(403).json({
-          success: false,
-          message: 'You do not have access to this application',
-        });
-      }
-    }
-
     const thread = await Thread.findOne({ sourceCaseId }).populate(threadPopulate);
     if (thread) {
+      if (!hasPhpLaneIdentifier(thread)) {
+        logMissingWorkflowLaneContext(req, 'GET /api/v1/threads/source/:sourceCaseId/workflow', {
+          sourceCaseId,
+          thread,
+        });
+      }
+
       const access = await ensureThreadAccess(req, thread);
       if (!access.allowed) {
         return res.status(access.statusCode).json({
@@ -453,6 +688,15 @@ router.get('/source/:sourceCaseId/workflow', requirePermission([]), async (req, 
           ...(access.scope ? { scope: access.scope } : {}),
         });
       }
+    } else {
+      logMissingWorkflowLaneContext(req, 'GET /api/v1/threads/source/:sourceCaseId/workflow', {
+        sourceCaseId,
+        reason: 'THREAD_NOT_FOUND_FOR_SOURCE_CASE',
+      });
+      return res.status(403).json({
+        success: false,
+        message: 'Workflow lane identity is required',
+      });
     }
 
     const workflow = await fetchWorkflowSnapshot(sourceCaseId, {
@@ -498,11 +742,7 @@ router.get('/:id/full', requirePermission([]), async (req, res) => {
       });
     }
 
-    const thread = await Thread.findByIdAndUpdate(
-      req.params.id,
-      { $set: { unreadCount: 0 } },
-      { new: true }
-    ).populate(threadPopulate);
+    const thread = await Thread.findById(req.params.id).populate(threadPopulate);
     if (!thread) {
       return res.status(404).json({
         success: false,
@@ -520,16 +760,22 @@ router.get('/:id/full', requirePermission([]), async (req, res) => {
     }
 
     const messages = await Message.find({ threadId: req.params.id }).sort({ createdAt: 1 });
+    const authorizedMessages = await filterAuthorizedMessages(req, thread, messages, access);
     const workflow = await resolveThreadWorkflowSnapshot(thread, req);
     const storedWorkflowSnapshot = thread?.metadata?.workflowSnapshot || thread?.metadata?.workflow_snapshot || null;
     const effectiveWorkflow = workflow || storedWorkflowSnapshot || null;
 
     let shouldSaveThread = false;
+    if (thread.unreadCount !== 0) {
+      thread.unreadCount = 0;
+      shouldSaveThread = true;
+    }
 
     if (effectiveWorkflow) {
+      const currentOwner = pickWorkflowCurrentOwner(effectiveWorkflow);
       thread.workflowSnapshot = {
-        currentUserId: effectiveWorkflow.ownerSummary?.validator?.userId || null,
-        currentUserName: effectiveWorkflow.ownerSummary?.validator?.name || null,
+        currentUserId: currentOwner?.userId || currentOwner?.user_id || currentOwner?.id || null,
+        currentUserName: currentOwner?.name || currentOwner?.userName || currentOwner?.user_name || null,
         currentRole: effectiveWorkflow.currentStage || null,
         assignedAt: new Date(),
         assignmentSource: workflow ? 'PHP_SNAPSHOT' : 'STORED_SNAPSHOT',
@@ -571,7 +817,7 @@ router.get('/:id/full', requirePermission([]), async (req, res) => {
     return res.json({
       success: true,
       thread,
-      messages,
+      messages: authorizedMessages,
       workflow: effectiveWorkflow,
     });
   } catch (error) {
@@ -593,7 +839,9 @@ router.get('/:id/workflow', requirePermission([]), async (req, res) => {
       });
     }
 
-    const thread = await Thread.findById(req.params.id).select('sourceCaseId');
+    const thread = await Thread.findById(req.params.id).select(
+      'sourceCaseId componentKey metadata.ownerRole metadata.phpThreadId metadata.workflow lastAssignedUserId workflowSnapshot createdBy claimedBy'
+    );
     if (!thread) {
       return res.status(404).json({
         success: false,
@@ -637,11 +885,7 @@ router.get('/:id', requirePermission([]), async (req, res) => {
       });
     }
 
-    const thread = await Thread.findByIdAndUpdate(
-      req.params.id,
-      { $set: { unreadCount: 0 } },
-      { new: true }
-    ).populate(threadPopulate);
+    const thread = await Thread.findById(req.params.id).populate(threadPopulate);
     if (!thread) {
       return res.status(404).json({
         success: false,
@@ -656,6 +900,11 @@ router.get('/:id', requirePermission([]), async (req, res) => {
         message: access.message,
         ...(access.scope ? { scope: access.scope } : {}),
       });
+    }
+
+    if (thread.unreadCount !== 0) {
+      thread.unreadCount = 0;
+      await thread.save();
     }
 
     return res.json({

@@ -124,6 +124,7 @@ class OutboundEmailQueueService {
 
     const emailMessage = await MailService.persistSentEmail({
       queue,
+      mailboxId: payload.mailboxId || null,
       threadId: payload.threadId,
       sourceCaseId: payload.sourceCaseId || null,
       direction: 'outbound',

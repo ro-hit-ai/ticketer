@@ -189,6 +189,12 @@ export default function ThreadListView({
           <div className="p-6 text-sm text-slate-500">No threads match your search.</div>
         ) : (
           <div className="divide-y divide-slate-200">
+            {console.log(
+              "THREAD_RUNTIME_CHECK",
+              filteredThreads.find(
+                t => t._id === "6a2bb58648290b17256318dd"
+              )
+            )}
             {filteredThreads.map((thread) => (
               <Link
                 key={thread._id}

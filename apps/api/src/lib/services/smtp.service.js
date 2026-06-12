@@ -9,13 +9,13 @@ const Ticket = require('../../models/Ticket');
 const Comment = require('../../models/Comment');
 const ImapEmail = require('../../models/ImapEmail');
 const EmailMessage = require('../../models/EmailMessage');
+const Mailbox = require('../../models/Mailbox');
 const { sendTicketCreate } = require('../nodemailer/ticket/create');
 const { requirePermission } = require('../roles');
+const { decryptSecret } = require('./secretField.service');
 
 const router = express.Router();
 
-const tlsRejectUnauthorized =
-  String(process.env.MAIL_TLS_REJECT_UNAUTHORIZED || 'true').toLowerCase() === 'true';
 const allowInsecureTls =
   String(process.env.MAIL_ALLOW_INSECURE_TLS || 'false').toLowerCase() === 'true';
 
@@ -23,7 +23,15 @@ function getTlsOptions(servername) {
   if (allowInsecureTls) {
     return { rejectUnauthorized: false, servername };
   }
-  return { rejectUnauthorized: tlsRejectUnauthorized, servername };
+  return { rejectUnauthorized: true, servername };
+}
+
+function getSmtpHost(queue) {
+  return (
+    String(queue?.smtpHost || '').trim() ||
+    String(process.env.SMTP_HOST || '').trim() ||
+    String(queue?.hostname || '').trim()
+  );
 }
 
 function getReplyText(email) {
@@ -55,6 +63,19 @@ function toPlainText(value) {
     .replace(/\n[ \t]+/g, '\n')
     .replace(/[ \t]{2,}/g, ' ')
     .trim();
+}
+
+async function resolveMailboxIdForQueue(queue) {
+  if (!queue?._id) return null;
+
+  const mailbox = await Mailbox.findOne({
+    $or: [
+      { emailQueueId: queue._id },
+      { emailAddress: String(queue.username || '').trim().toLowerCase() },
+    ],
+  }).select('_id');
+
+  return mailbox?._id || null;
 }
 
 class MailService {
@@ -93,7 +114,7 @@ class MailService {
       case 'other':
         return {
           user: queue.username,
-          password: queue.password,
+          password: decryptSecret(queue.password),
           host: queue.hostname,
           port: queue.imapPort || 993,
           tls: queue.tls || false,
@@ -106,6 +127,7 @@ class MailService {
 
   static async getSmtpTransporter(queue) {
     const smtpPort = Number(queue.smtpPort || 587);
+    const smtpHost = getSmtpHost(queue);
     const useTls = Boolean(queue.tls);
     // 465 = implicit TLS (secure:true). 587/25 = STARTTLS/plain (secure:false).
     const secure = smtpPort === 465;
@@ -118,23 +140,23 @@ class MailService {
           type: 'OAuth2',
           user: queue.username,
           clientId: queue.clientId,
-          clientSecret: queue.clientSecret,
-          refreshToken: queue.refreshToken,
+          clientSecret: decryptSecret(queue.clientSecret),
+          refreshToken: decryptSecret(queue.refreshToken),
           accessToken,
         },
       });
     }
 
     return nodemailer.createTransport({
-      host: queue.hostname,
+      host: smtpHost,
       port: smtpPort,
       secure,
       requireTLS: !secure && useTls,
       auth: {
         user: queue.username,
-        pass: queue.password,
+        pass: decryptSecret(queue.password),
       },
-      tls: getTlsOptions(queue.hostname),
+      tls: getTlsOptions(smtpHost),
     });
   }
 
@@ -176,6 +198,7 @@ class MailService {
 
   static async persistSentEmail({
     queue,
+    mailboxId = null,
     threadId = null,
     sourceCaseId = null,
     direction = 'outbound',
@@ -211,6 +234,8 @@ class MailService {
       return null;
     }
 
+    const resolvedMailboxId = mailboxId || await resolveMailboxIdForQueue(queue);
+
     return EmailMessage.findOneAndUpdate(
       {
         mailbox: queue._id,
@@ -237,6 +262,7 @@ class MailService {
           })),
         },
         $set: {
+          mailboxId: resolvedMailboxId,
           threadId,
           sourceCaseId,
           direction,

@@ -1,3 +1,14 @@
+async function workflowFetch(fetchWithAuth, url, options = {}) {
+  const response = await fetchWithAuth(url, {
+    ...options,
+    headers: {
+      ...(options.headers || {}),
+    },
+  });
+
+  return response;
+}
+
 export async function getThreads(fetchWithAuth, params = {}) {
   const search = new URLSearchParams();
 
@@ -18,7 +29,7 @@ export async function getThreads(fetchWithAuth, params = {}) {
   }
 
   const query = search.toString();
-  const response = await fetchWithAuth(`/v1/threads${query ? `?${query}` : ""}`, {
+  const response = await workflowFetch(fetchWithAuth, `/v1/threads${query ? `?${query}` : ""}`, {
     method: "GET",
   });
   const data = await response.json();
@@ -31,7 +42,7 @@ export async function getThreads(fetchWithAuth, params = {}) {
 }
 
 export async function getThreadFull(fetchWithAuth, threadId) {
-  const response = await fetchWithAuth(`/v1/threads/${threadId}/full`, {
+  const response = await workflowFetch(fetchWithAuth, `/v1/threads/${threadId}/full`, {
     method: "GET",
   });
   const data = await response.json();
@@ -48,7 +59,7 @@ export async function getThreadFull(fetchWithAuth, threadId) {
 }
 
 export async function getThreadWorkflow(fetchWithAuth, threadId) {
-  const response = await fetchWithAuth(`/v1/threads/${threadId}/workflow`, {
+  const response = await workflowFetch(fetchWithAuth, `/v1/threads/${threadId}/workflow`, {
     method: "GET",
   });
   const data = await response.json();
@@ -61,7 +72,7 @@ export async function getThreadWorkflow(fetchWithAuth, threadId) {
 }
 
 export async function getThreadBySourceCaseId(fetchWithAuth, sourceCaseId) {
-  const response = await fetchWithAuth(`/v1/threads/source/${encodeURIComponent(sourceCaseId.trim())}`, {
+  const response = await workflowFetch(fetchWithAuth, `/v1/threads/source/${encodeURIComponent(sourceCaseId.trim())}`, {
     method: "GET",
   });
   const data = await response.json();
@@ -74,7 +85,7 @@ export async function getThreadBySourceCaseId(fetchWithAuth, sourceCaseId) {
 }
 
 export async function createOrOpenThread(fetchWithAuth, payload) {
-  const response = await fetchWithAuth("/v1/threads", {
+  const response = await workflowFetch(fetchWithAuth, "/v1/threads", {
     method: "POST",
     body: JSON.stringify(payload),
   });
@@ -91,7 +102,7 @@ export async function createOrOpenThread(fetchWithAuth, payload) {
 }
 
 export async function sendMessage(fetchWithAuth, payload) {
-  const response = await fetchWithAuth("/v1/messages", {
+  const response = await workflowFetch(fetchWithAuth, "/v1/messages", {
     method: "POST",
     body: JSON.stringify(payload),
   });

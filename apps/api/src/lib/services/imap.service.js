@@ -12,12 +12,17 @@ const User = require('../../models/User'); // adjust path if needed
 const EmailMessage = require('../../models/EmailMessage');
 const Thread = require('../../models/Thread');
 const Message = require('../../models/Message');
+const Mailbox = require('../../models/Mailbox');
 const nodemailer = require('nodemailer');
 const { requirePermission } = require('../roles');
+const { decryptSecret } = require('./secretField.service');
 const {
   buildHeaderSnapshot,
+  extractSourceCaseIdFromHeaders,
   extractSourceCaseIdFromHeadersOrSubject,
+  extractSourceCaseIdFromSubject,
   getHeader,
+  normalizeMessageId,
   normalizeReferences,
   resolveThreadForInboundEmail,
 } = require('./emailThreading.service');
@@ -54,6 +59,46 @@ function normalizeFolder(folderName) {
   return "internal"; // fallback for other folders
 }
 
+async function ensureInboundWorkflowThread({ sourceCaseId, applicantEmail, subject, mailboxId }) {
+  const normalizedSourceCaseId =
+    typeof sourceCaseId === "string" ? sourceCaseId.trim().toUpperCase() : "";
+  if (!normalizedSourceCaseId) return null;
+
+  const setOnInsert = {
+    sourceCaseId: normalizedSourceCaseId,
+    status: "monitoring",
+    isMapped: true,
+    "metadata.createdAt": new Date(),
+  };
+
+  const set = {
+    "metadata.applicationId": normalizedSourceCaseId,
+  };
+
+  if (typeof applicantEmail === "string" && applicantEmail.trim()) {
+    const normalizedApplicantEmail = applicantEmail.trim().toLowerCase();
+    set.applicantEmail = normalizedApplicantEmail;
+    set["metadata.applicantEmail"] = normalizedApplicantEmail;
+  }
+
+  if (typeof subject === "string" && subject.trim()) {
+    set.subject = subject.trim();
+  }
+
+  if (mailboxId) {
+    set.mailboxId = mailboxId;
+  }
+
+  return Thread.findOneAndUpdate(
+    { sourceCaseId: normalizedSourceCaseId },
+    {
+      $setOnInsert: setOnInsert,
+      $set: set,
+    },
+    { upsert: true, new: true, setDefaultsOnInsert: true }
+  );
+}
+
 // Save parsed email into EmailMessage collection
 async function saveEmail(parsed, mailboxId, folder, options = {}) {
   const messageId = options.messageId || parsed.messageId;
@@ -86,6 +131,7 @@ async function saveEmail(parsed, mailboxId, folder, options = {}) {
         })),
       },
       $set: {
+        mailboxId: options.mailboxId || null,
         threadId: options.threadId || null,
         sourceCaseId: options.sourceCaseId || null,
         direction: options.direction || 'inbound',
@@ -99,6 +145,19 @@ async function saveEmail(parsed, mailboxId, folder, options = {}) {
     },
     { upsert: true, new: true }
   );
+}
+
+async function resolveMailboxForQueue(queue) {
+  if (!queue?._id) return null;
+
+  return Mailbox.findOne({
+    $or: [
+      { emailQueueId: queue._id },
+      { emailAddress: String(queue.username || '').trim().toLowerCase() },
+    ],
+  })
+    .select('_id emailQueueId emailAddress')
+    .lean();
 }
 
 function escapeRegex(value) {
@@ -146,7 +205,12 @@ async function findExistingThreadForInboundEmail({ extractedSourceCaseId, normal
     return null;
   }
 
-  const candidates = await Thread.find({ applicantEmail: normalizedFromEmail })
+  const applicantQuery = {
+    applicantEmail: normalizedFromEmail,
+    ...(mailboxId ? { mailboxId } : {}),
+  };
+
+  const candidates = await Thread.find(applicantQuery)
     .sort({ createdAt: -1 })
     .limit(5);
 
@@ -154,12 +218,21 @@ async function findExistingThreadForInboundEmail({ extractedSourceCaseId, normal
     return null;
   }
 
-  const mailboxMatch = candidates.find((candidate) => String(candidate.mailboxId || "") === String(mailboxId || ""));
-  if (mailboxMatch) {
-    return mailboxMatch;
+  if (candidates.length === 1) {
+    return candidates[0];
   }
 
-  return candidates.length === 1 ? candidates[0] : null;
+  logWorkflowThreadResolution('Skipped applicantEmail fallback because multiple candidate threads matched', {
+    applicantEmail: normalizedFromEmail,
+    mailboxId: String(mailboxId || ''),
+    candidateCount: candidates.length,
+  });
+
+  return null;
+}
+
+function logWorkflowThreadResolution(message, context = {}) {
+  console.log(`[IMAP][THREADING] ${message}`, context);
 }
 
 function serializeEmail(emailDoc) {
@@ -216,6 +289,15 @@ function buildKeepaliveConfig() {
     interval: Number(process.env.IMAP_KEEPALIVE_INTERVAL_MS || 10000),
     idleInterval: Number(process.env.IMAP_KEEPALIVE_IDLE_INTERVAL_MS || 300000),
     forceNoop: true,
+  };
+}
+
+function getTlsOptions(servername) {
+  const allowInsecureTls =
+    String(process.env.MAIL_ALLOW_INSECURE_TLS || 'false').toLowerCase() === 'true';
+  return {
+    rejectUnauthorized: !allowInsecureTls,
+    servername,
   };
 }
 
@@ -434,8 +516,8 @@ async function getSmtpTransport(queue) {
         type: "OAuth2",
         user: queue.username,
         clientId: queue.clientId,
-        clientSecret: queue.clientSecret,
-        refreshToken: queue.refreshToken,
+        clientSecret: decryptSecret(queue.clientSecret),
+        refreshToken: decryptSecret(queue.refreshToken),
         accessToken,
       },
     });
@@ -448,9 +530,9 @@ async function getSmtpTransport(queue) {
     secure: smtpPort === 465 || Boolean(queue.tls),
     auth: {
       user: queue.username,
-      pass: queue.password,
+      pass: decryptSecret(queue.password),
     },
-    tls: { rejectUnauthorized: false, servername: queue.hostname },
+    tls: getTlsOptions(queue.hostname),
   });
 }
 
@@ -461,6 +543,7 @@ async function sendTicketCreatedAck(queue, ticket, recipientEmail) {
 
   try {
     const transport = await getSmtpTransport(queue);
+    const mailbox = await resolveMailboxForQueue(queue);
     const subject = `Issue #${ticket._id} has just been created & logged`;
     const text = `Hello there, your ticket "${ticket.title}" has now been created and logged. Ticket ID: ${ticket._id}.`;
     const html = `
@@ -500,6 +583,10 @@ async function sendTicketCreatedAck(queue, ticket, recipientEmail) {
           date: new Date(),
           isRead: true,
           attachments: [],
+        },
+        $set: {
+          mailboxId: mailbox?._id || null,
+          direction: 'outbound',
         },
       },
       { upsert: true }
@@ -566,13 +653,13 @@ class ImapService {
         connTimeout: Number(process.env.IMAP_CONN_TIMEOUT_MS || 30000),
         socketTimeout: Number(process.env.IMAP_SOCKET_TIMEOUT_MS || 120000),
         keepalive: buildKeepaliveConfig(),
-        tlsOptions: { rejectUnauthorized: false, servername: queue.hostname || "imap.gmail.com" },
+        tlsOptions: getTlsOptions(queue.hostname || "imap.gmail.com"),
       };
     }
 
     return {
       user: queue.username,
-      password: queue.password,
+      password: decryptSecret(queue.password),
       host: queue.hostname || "imap.gmail.com",
       port: Number(queue.imapPort || (queue.tls ? 993 : 143)),
       tls: queue.tls || false,
@@ -580,7 +667,7 @@ class ImapService {
       connTimeout: Number(process.env.IMAP_CONN_TIMEOUT_MS || 30000),
       socketTimeout: Number(process.env.IMAP_SOCKET_TIMEOUT_MS || 120000),
       keepalive: buildKeepaliveConfig(),
-      tlsOptions: { rejectUnauthorized: false, servername: queue.hostname || "imap.gmail.com" },
+      tlsOptions: getTlsOptions(queue.hostname || "imap.gmail.com"),
     };
   }
 
@@ -657,13 +744,21 @@ class ImapService {
 
 
   // Process email for ticket or save
-static async processEmail(parsed, mailboxId, queue) {
+static async processEmail(parsed, mailboxContext, queue) {
+  const emailQueueId =
+    mailboxContext && typeof mailboxContext === 'object' && !Array.isArray(mailboxContext)
+      ? mailboxContext.emailQueueId
+      : mailboxContext;
+  const mailboxId =
+    mailboxContext && typeof mailboxContext === 'object' && !Array.isArray(mailboxContext)
+      ? mailboxContext.mailboxId || null
+      : null;
   const subjectLower = parsed.subject?.toLowerCase() || "";
   const fromEmail = parsed.from?.value?.[0]?.address;
   const normalizedFromEmail = String(fromEmail || "").toLowerCase();
   const normalizedQueueEmail = String(queue.username || "").toLowerCase();
   const toEmails = parsed.to?.value?.map(addr => String(addr.address || "").toLowerCase()) || [];
-  const inReplyTo = getHeader(parsed, 'in-reply-to') || null;
+  const inReplyTo = normalizeMessageId(getHeader(parsed, 'in-reply-to')) || null;
   const references = normalizeReferences(getHeader(parsed, 'references'));
   const headerSnapshot = buildHeaderSnapshot(parsed);
 
@@ -671,8 +766,9 @@ static async processEmail(parsed, mailboxId, queue) {
 
   if (normalizedFromEmail && normalizedFromEmail === normalizedQueueEmail) {
     console.log(`Skipping self-sent email (not inbound): ${normalizedFromEmail}`);
-    await saveEmail(parsed, mailboxId, "sent", {
+    await saveEmail(parsed, emailQueueId, "sent", {
       messageId: parsed.messageId,
+      mailboxId,
       direction: 'outbound',
       inReplyTo,
       references,
@@ -690,8 +786,9 @@ static async processEmail(parsed, mailboxId, queue) {
   // Ignore internal or agent emails for ticket creation
   const isInternalOrAgent = normalizedFromEmail === normalizedQueueEmail || folder === "internal";
   if (isInternalOrAgent) {
-    await saveEmail(parsed, mailboxId, folder, {
+    await saveEmail(parsed, emailQueueId, folder, {
       messageId: parsed.messageId,
+      mailboxId,
       direction: folder === 'sent' ? 'outbound' : 'inbound',
       inReplyTo,
       references,
@@ -705,7 +802,9 @@ static async processEmail(parsed, mailboxId, queue) {
   // ------------------------------------------------------------------
   // Keep existing ticket behavior intact: only divert to thread/message if we can map to a thread.
   if (folder === "inbox" && normalizedFromEmail) {
-    const subjectApplicationId = extractApplicationIdFromSubject(parsed.subject);
+    const subjectApplicationId = extractSourceCaseIdFromSubject(parsed) || extractApplicationIdFromSubject(parsed.subject);
+    const headerApplicationId = extractSourceCaseIdFromHeaders(parsed);
+    const plusAddressApplicationId = extractSourceCaseIdFromPlusAddress(toEmails);
     let thread = subjectApplicationId
       ? await Thread.findOne({ sourceCaseId: subjectApplicationId })
       : null;
@@ -715,13 +814,14 @@ static async processEmail(parsed, mailboxId, queue) {
           sourceCaseId: thread.sourceCaseId || subjectApplicationId,
           inReplyTo,
           references,
+          resolutionMethod: 'subject',
         }
       : await resolveThreadForInboundEmail(parsed);
     const extractedSourceCaseId =
-      subjectApplicationId ||
       resolvedInbound.sourceCaseId ||
-      extractSourceCaseIdFromHeadersOrSubject(parsed) ||
-      extractSourceCaseIdFromPlusAddress(toEmails);
+      subjectApplicationId ||
+      headerApplicationId ||
+      plusAddressApplicationId;
 
     thread =
       thread ||
@@ -732,129 +832,213 @@ static async processEmail(parsed, mailboxId, queue) {
         mailboxId,
       }));
 
-    if(thread){
-       const externalMessageId = parsed.messageId ? String(parsed.messageId) : null;
-
-if (externalMessageId) {
-  const exists = await Message.findOne({ threadId: thread._id, externalMessageId });
-  if (exists) return;
-}
-
-const inboundBody = getReplyText(parsed) || parsed.text || parsed.html || "No Body";
-
-// ================== 🔥 INBOUND ROUTING FIX ==================
-let routedToUserId = null;
-
-// STEP 1: Try In-Reply-To (BEST CASE)
-let inReplyTo = getHeader(parsed, 'in-reply-to');
-
-if (inReplyTo) {
-  const normalizedInReplyTo = inReplyTo.replace(/[<>]/g, '').trim();
-
-const originalEmail = await EmailMessage.findOne({
-  messageId: { $regex: normalizedInReplyTo, $options: 'i' }
-});
-
-  if (originalEmail?.sentByUserId) {
-    routedToUserId = String(originalEmail.sentByUserId);
-    console.log("✅ Routed via In-Reply-To:", routedToUserId);
-  }
-}
-
-// STEP 2: Fallback (thread ownership logic)
-if (!routedToUserId) {
-  routedToUserId = await resolveInboundRecipientUserId(thread);
-  console.log("↩️ Routed via fallback:", routedToUserId);
-}
-
-// Normalize header for storage
-if (inReplyTo) {
-  inReplyTo = inReplyTo.replace(/[<>]/g, '').trim();
-}
-// ===========================================================
-
-// Save email
-const emailRecord = await saveEmail(parsed, mailboxId, folder, {
-  messageId: externalMessageId || parsed.messageId,
-  threadId: thread._id,
-  sourceCaseId: thread.sourceCaseId || extractedSourceCaseId || null,
-  direction: 'inbound',
-  inReplyTo,
-  references,
-  headers: headerSnapshot,
-  recipientUserId: routedToUserId,
-});
-
-let message = null;
-
-try {
-  message = await Message.create({
-    threadId: thread._id,
-    sourceCaseId: thread.sourceCaseId || extractedSourceCaseId || null,
-    ticketId: effectiveTicketId || null,
-    mailboxId: thread.mailboxId || mailboxId || null,
-    direction: "inbound",
-    channel: "email",
-    sender: {
-      id: null,
-      name: parsed.from?.value?.[0]?.name || null,
-      email: normalizedFromEmail || null,
-      type: "external",
-    },
-    sentByUserId: null,
-    sentByRole: null,
-    recipientUserId: routedToUserId,
-    recipients: { to: toEmails, cc: [], bcc: [] },
-    subject: parsed.subject || thread.subject || null,
-    body: String(inboundBody || "").trim() || "No Body",
-    bodyHtml: parsed.html || null,
-    externalMessageId,
-    emailMessageId: emailRecord?._id || null,
-    status: "received",
-    metadata: {
-      imap: {
-        mailboxId: String(mailboxId),
-        folder,
-      },
-      routedToUserId,
-      workflowSnapshotAtReceive: thread.workflowSnapshot || {},
-    },
-  });
-} catch (error) {
-  if (error?.code === 11000 && externalMessageId) {
-    return;
-  }
-  throw error;
-}
-
-// Update thread
-const shouldActivate = thread.status === "monitoring";
-const activationTrigger = shouldActivate
-  ? resolveActivationTrigger({
-      direction: "inbound",
-      sender: message.sender,
-    })
-  : null;
-
-await Thread.findByIdAndUpdate(thread._id, {
-  $inc: { unreadCount: 1 },
-  $set: {
-    lastMessage: buildLastMessagePreview(message.body),
-    lastMessageAt: message.createdAt,
-    mailboxId: message.mailboxId || thread.mailboxId || null,
-    ...(shouldActivate
-      ? {
-          status: "active",
-          activatedAt: new Date(),
-          activationTrigger: activationTrigger || "candidate_email",
-        }
-      : {}),
-  },
-});
+    if (!thread && extractedSourceCaseId) {
+      thread = await ensureInboundWorkflowThread({
+        sourceCaseId: extractedSourceCaseId,
+        applicantEmail: normalizedFromEmail,
+        subject: parsed.subject || null,
+        mailboxId,
+      });
+      logWorkflowThreadResolution('Created thread from inbound application identifier', {
+        messageId: parsed.messageId || null,
+        sourceCaseId: extractedSourceCaseId,
+        resolutionMethod: resolvedInbound.resolutionMethod || (plusAddressApplicationId ? 'plusAddress' : 'sourceCaseId'),
+        mailboxId: String(mailboxId || ''),
+      });
     }
+
+    if (thread) {
+      const externalMessageId = parsed.messageId ? String(parsed.messageId) : null;
+      const resolvedSourceCaseId = thread.sourceCaseId || extractedSourceCaseId || null;
+      const effectiveTicketId = await ensureTicketForThread({
+        thread,
+        parsed,
+        fromEmail,
+        queue,
+        mailboxId,
+      });
+
+      if (externalMessageId) {
+        const exists = await Message.findOne({ threadId: thread._id, externalMessageId });
+        if (exists) {
+          logWorkflowThreadResolution('Skipped duplicate inbound message', {
+            messageId: externalMessageId,
+            threadId: String(thread._id),
+            sourceCaseId: resolvedSourceCaseId,
+          });
+          return;
+        }
+      }
+
+      const inboundBody = getReplyText(parsed) || parsed.text || parsed.html || "No Body";
+      let routedToUserId = null;
+      let workflowComponentKey = null;
+      let workflowOwnerRole = null;
+
+      if (inReplyTo) {
+        const originalEmail = await EmailMessage.findOne({
+          messageId: { $regex: '^<?' + inReplyTo + '>?$', $options: 'i' }
+        });
+
+        if (originalEmail?.sentByUserId) {
+          routedToUserId = String(originalEmail.sentByUserId);
+          logWorkflowThreadResolution('Routed inbound recipient via In-Reply-To', {
+            messageId: externalMessageId,
+            routedToUserId,
+            threadId: String(thread._id),
+          });
+        }
+
+        const originalHeaders = originalEmail?.headers && typeof originalEmail.headers === 'object'
+          ? originalEmail.headers
+          : {};
+        workflowComponentKey =
+          String(
+            originalHeaders['x-workflow-component-key']
+            || originalHeaders['X-Workflow-Component-Key']
+            || ''
+          ).trim() || null;
+      }
+
+      if (inReplyTo && (!workflowComponentKey || !workflowOwnerRole)) {
+        const parentMessage = await Message.findOne({
+          externalMessageId: { $regex: '^<?' + inReplyTo + '>?$', $options: 'i' },
+          direction: 'outbound',
+        }).select('sentByRole metadata');
+        const workflowMeta = parentMessage?.metadata && typeof parentMessage.metadata === 'object'
+          ? (parentMessage.metadata.workflow && typeof parentMessage.metadata.workflow === 'object'
+              ? parentMessage.metadata.workflow
+              : parentMessage.metadata)
+          : {};
+        if (!workflowComponentKey) {
+          workflowComponentKey = String(
+            workflowMeta.componentKey
+            || workflowMeta.component_key
+            || ''
+          ).trim() || null;
+        }
+        workflowOwnerRole = String(parentMessage?.sentByRole || workflowMeta.senderRole || '').trim() || null;
+      }
+
+      if (!routedToUserId) {
+        routedToUserId = await resolveInboundRecipientUserId(thread, parsed);
+        logWorkflowThreadResolution('Routed inbound recipient via fallback ownership', {
+          messageId: externalMessageId,
+          routedToUserId,
+          threadId: String(thread._id),
+        });
+      }
+
+      const emailRecord = await saveEmail(parsed, emailQueueId, folder, {
+        mailboxId,
+        messageId: externalMessageId || parsed.messageId,
+        threadId: thread._id,
+        sourceCaseId: resolvedSourceCaseId,
+        direction: 'inbound',
+        inReplyTo,
+        references,
+        headers: headerSnapshot,
+        recipientUserId: routedToUserId,
+      });
+
+      let message = null;
+
+      try {
+        message = await Message.create({
+          threadId: thread._id,
+          sourceCaseId: resolvedSourceCaseId,
+          ticketId: effectiveTicketId || null,
+          mailboxId: thread.mailboxId || mailboxId || null,
+          direction: "inbound",
+          channel: "email",
+          sender: {
+            id: null,
+            name: parsed.from?.value?.[0]?.name || null,
+            email: normalizedFromEmail || null,
+            type: "external",
+          },
+          sentByUserId: null,
+          sentByRole: null,
+          recipientUserId: routedToUserId,
+          recipients: { to: toEmails, cc: [], bcc: [] },
+          subject: parsed.subject || thread.subject || null,
+          body: String(inboundBody || "").trim() || "No Body",
+          bodyHtml: parsed.html || null,
+          externalMessageId,
+          emailMessageId: emailRecord?._id || null,
+          status: "received",
+          metadata: {
+            imap: {
+              mailboxId: String(mailboxId),
+              folder,
+              resolutionMethod: resolvedInbound.resolutionMethod || (plusAddressApplicationId ? 'plusAddress' : 'fallback'),
+            },
+            workflow: {
+              componentKey: workflowComponentKey,
+              senderRole: workflowOwnerRole,
+            },
+            routedToUserId,
+            workflowSnapshotAtReceive: thread.workflowSnapshot || {},
+          },
+        });
+      } catch (error) {
+        if (error?.code === 11000 && externalMessageId) {
+          logWorkflowThreadResolution('Skipped duplicate inbound message during create', {
+            messageId: externalMessageId,
+            threadId: String(thread._id),
+          });
+          return;
+        }
+        throw error;
+      }
+
+      const shouldActivate = thread.status === "monitoring";
+      const activationTrigger = shouldActivate
+        ? resolveActivationTrigger({
+            direction: "inbound",
+            sender: message.sender,
+          })
+        : null;
+
+      await Thread.findByIdAndUpdate(thread._id, {
+        $inc: { unreadCount: 1 },
+        $set: {
+          lastMessage: buildLastMessagePreview(message.body),
+          lastMessageAt: message.createdAt,
+          mailboxId: message.mailboxId || thread.mailboxId || null,
+          ...(shouldActivate
+            ? {
+                status: "active",
+                activatedAt: new Date(),
+                activationTrigger: activationTrigger || "candidate_email",
+              }
+            : {}),
+        },
+      });
+
+      logWorkflowThreadResolution('Mapped inbound email into workflow thread', {
+        messageId: externalMessageId,
+        threadId: String(thread._id),
+        sourceCaseId: resolvedSourceCaseId,
+        resolutionMethod: resolvedInbound.resolutionMethod || (plusAddressApplicationId ? 'plusAddress' : 'fallback'),
+        createdMessageId: String(message._id),
+      });
+      return;
+    }
+
+    logWorkflowThreadResolution('Unable to resolve workflow thread for inbound email; leaving raw inbox record only', {
+      messageId: parsed.messageId || null,
+      sourceCaseId: extractedSourceCaseId || null,
+      subjectSourceCaseId: subjectApplicationId || null,
+      headerSourceCaseId: headerApplicationId || null,
+      plusAddressSourceCaseId: plusAddressApplicationId || null,
+      inReplyTo,
+      referencesCount: references.length,
+    });
   }
 
-  await saveEmail(parsed, mailboxId, folder, {
+  await saveEmail(parsed, emailQueueId, folder, {
+    mailboxId,
     messageId: parsed.messageId,
     sourceCaseId:
       extractSourceCaseIdFromHeadersOrSubject(parsed) || extractSourceCaseIdFromPlusAddress(toEmails),
@@ -956,7 +1140,15 @@ await Comment.create({
 }
 
 
-  static async fetchFolderMails(connection, queue, folderName, mailboxId) {
+  static async fetchFolderMails(connection, queue, folderName, mailboxContext) {
+    const emailQueueId =
+      mailboxContext && typeof mailboxContext === 'object' && !Array.isArray(mailboxContext)
+        ? mailboxContext.emailQueueId
+        : mailboxContext;
+    const mailboxId =
+      mailboxContext && typeof mailboxContext === 'object' && !Array.isArray(mailboxContext)
+        ? mailboxContext.mailboxId || null
+        : null;
     try {
       await connection.openBox(folderName);
       logImapDebug('IMAP box opened', {
@@ -1016,7 +1208,7 @@ await Comment.create({
 
         const fallbackMessageId = parsed.messageId || `${queue._id}:${folderName}:${res.attributes.uid}`;
         const exists = await EmailMessage.findOne({
-          mailbox: mailboxId,
+          mailbox: emailQueueId,
           messageId: fallbackMessageId,
         });
         if (exists) {
@@ -1025,7 +1217,7 @@ await Comment.create({
         }
 
         parsed.messageId = fallbackMessageId;
-        await ImapService.processEmail(parsed, mailboxId, queue); // processEmail handles save
+        await ImapService.processEmail(parsed, { emailQueueId, mailboxId }, queue); // processEmail handles save
         await persistFolderUidState(queue._id, folderName, currentUid);
       }
 
@@ -1073,6 +1265,7 @@ await Comment.create({
           let connection = null;
           try {
             const imapConfig = await this.getImapConfig(queue);
+            const mailbox = await resolveMailboxForQueue(queue);
             logImapDebug('Starting IMAP connection attempt', {
               ...buildQueueDebugInfo(queue),
               attempt,
@@ -1095,7 +1288,10 @@ await Comment.create({
             });
 
             // Sequential fetch: Inbox first, then Sent
-            await this.fetchFolderMails(connection, queue, "INBOX", queue._id);
+            await this.fetchFolderMails(connection, queue, "INBOX", {
+              emailQueueId: queue._id,
+              mailboxId: mailbox?._id || null,
+            });
             // await this.fetchFolderMails(connection, queue, "[Gmail]/Sent Mail", queue._id);
             console.log(`📡 Completed fetch for: ${queue.username}`);
             clearQueueFailureState(queue._id);
@@ -1192,7 +1388,7 @@ router.post('/test-fetch', requirePermission(['integration::manage']), async (re
         message: 'queueId is required',
       });
     }
-
+   
     const result = await ImapService.testFetchQueue(queueId);
 
     return res.status(200).json({

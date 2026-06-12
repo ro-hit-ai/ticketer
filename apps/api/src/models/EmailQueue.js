@@ -1,4 +1,15 @@
 const mongoose = require('mongoose');
+const { encryptSecret } = require('../lib/services/secretField.service');
+
+const SECRET_FIELDS = ['password', 'clientSecret', 'accessToken', 'refreshToken'];
+
+function encryptSecretFields(target = {}) {
+  SECRET_FIELDS.forEach((field) => {
+    if (target[field] !== undefined && target[field] !== null && target[field] !== '') {
+      target[field] = encryptSecret(target[field]);
+    }
+  });
+}
 
 const EmailQueueSchema = new mongoose.Schema({
   // Basic configuration
@@ -35,6 +46,11 @@ const EmailQueueSchema = new mongoose.Schema({
   hostname: {
     type: String,
     required: true,
+    trim: true
+  },
+  smtpHost: {
+    type: String,
+    default: null,
     trim: true
   },
   imapPort: {
@@ -123,7 +139,21 @@ EmailQueueSchema.index({ isDeleted: 1 });
 
 // Pre-save middleware to update updatedAt
 EmailQueueSchema.pre('save', function (next) {
+  encryptSecretFields(this);
   this.updatedAt = Date.now();
+  next();
+});
+
+EmailQueueSchema.pre('findOneAndUpdate', function encryptUpdatedSecrets(next) {
+  const update = this.getUpdate() || {};
+
+  encryptSecretFields(update);
+
+  if (update.$set) {
+    encryptSecretFields(update.$set);
+  }
+
+  this.setUpdate(update);
   next();
 });
 

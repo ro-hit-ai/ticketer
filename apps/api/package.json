@@ -10,7 +10,9 @@
     "start": "node src/main.js",
     "admin:create": "node scripts/create-admin.js",
     "smoke:test": "node scripts/smoke-test.js",
-    "migrate:email-body-text": "node scripts/migrate-emailmessage-body-text.js"
+    "credentials:encrypt": "node scripts/encrypt-email-queue-secrets.js",
+    "migrate:email-body-text": "node scripts/migrate-emailmessage-body-text.js",
+    "backfill:php-lane-identity": "node scripts/backfill-php-lane-identity.js"
   },
   "devDependencies": {
     "nodemon": "^3.1.14"

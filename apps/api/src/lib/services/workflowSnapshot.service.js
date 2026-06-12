@@ -308,6 +308,36 @@ function normalizeTimelineEvent(row = {}) {
   };
 }
 
+function pickWorkflowCurrentOwner(snapshot = {}) {
+  const ownerSummary = normalizeObject(snapshot.ownerSummary || snapshot.owner_summary);
+  const currentStage = String(
+    pickFirst(snapshot.currentStage, snapshot.current_stage, snapshot.rawCaseStatus, snapshot.raw_case_status, '')
+  ).toLowerCase();
+
+  const validator = normalizeObject(ownerSummary.validator || ownerSummary.validator_summary);
+  const verifierRaw = ownerSummary.verifier || ownerSummary.verifiers || ownerSummary.verifier_summary;
+  const verifiers = Array.isArray(verifierRaw)
+    ? verifierRaw.map((item) => normalizeObject(item)).filter((item) => Object.keys(item).length > 0)
+    : verifierRaw && typeof verifierRaw === 'object'
+      ? [normalizeObject(verifierRaw)]
+      : [];
+  const dbVerifier = normalizeObject(ownerSummary.dbVerifier || ownerSummary.db_verifier);
+
+  if (currentStage.includes('verifier') || currentStage.includes('verification')) {
+    return verifiers[0] || dbVerifier || validator || {};
+  }
+
+  if (currentStage.includes('validator') || currentStage.includes('validation')) {
+    return validator || verifiers[0] || dbVerifier || {};
+  }
+
+  if (currentStage.includes('qa') || currentStage.includes('team lead') || currentStage.includes('team_lead')) {
+    return normalizeObject(ownerSummary.qa || ownerSummary.teamLead || ownerSummary.team_lead) || {};
+  }
+
+  return validator || verifiers[0] || dbVerifier || {};
+}
+
 async function fetchLatestTimelineEvent(applicationId, headers) {
   const timelineUrl = getTimelineUrl();
   if (!timelineUrl) {
@@ -511,4 +541,5 @@ async function fetchWorkflowSnapshot(applicationId, options = {}) {
 
 module.exports = {
   fetchWorkflowSnapshot,
+  pickWorkflowCurrentOwner,
 };

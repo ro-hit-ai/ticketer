@@ -1,0 +1,725 @@
+{
+  "runId": "lane-backfill-2026-06-10T10-15-01-316Z",
+  "rollback": [
+    {
+      "collection": "messages",
+      "_id": "69ecca806ce2ee6d2c88cb65",
+      "previous": {
+        "phpThreadId": null,
+        "componentKey": null,
+        "ownerRole": null,
+        "metadataLaneBackfill": null
+      }
+    },
+    {
+      "collection": "messages",
+      "_id": "69facf038419e7ae82bf4bb4",
+      "previous": {
+        "phpThreadId": null,
+        "componentKey": null,
+        "ownerRole": null,
+        "metadataLaneBackfill": null
+      }
+    },
+    {
+      "collection": "messages",
+      "_id": "6a057cdf2a5876463210c76e",
+      "previous": {
+        "phpThreadId": null,
+        "componentKey": null,
+        "ownerRole": null,
+        "metadataLaneBackfill": null
+      }
+    },
+    {
+      "collection": "messages",
+      "_id": "6a057f7b2a5876463210c888",
+      "previous": {
+        "phpThreadId": null,
+        "componentKey": null,
+        "ownerRole": null,
+        "metadataLaneBackfill": null
+      }
+    },
+    {
+      "collection": "messages",
+      "_id": "6a0841513336fbbb507b0d50",
+      "previous": {
+        "phpThreadId": null,
+        "componentKey": null,
+        "ownerRole": null,
+        "metadataLaneBackfill": null
+      }
+    },
+    {
+      "collection": "messages",
+      "_id": "6a0aec2cd6cb93f21d1d5d5b",
+      "previous": {
+        "phpThreadId": null,
+        "componentKey": null,
+        "ownerRole": null,
+        "metadataLaneBackfill": null
+      }
+    },
+    {
+      "collection": "messages",
+      "_id": "6a0c3ea9d86b0ad76e688868",
+      "previous": {
+        "phpThreadId": null,
+        "componentKey": null,
+        "ownerRole": null,
+        "metadataLaneBackfill": null
+      }
+    },
+    {
+      "collection": "messages",
+      "_id": "6a0c3ff0d86b0ad76e6888fd",
+      "previous": {
+        "phpThreadId": null,
+        "componentKey": null,
+        "ownerRole": null,
+        "metadataLaneBackfill": null
+      }
+    },
+    {
+      "collection": "messages",
+      "_id": "6a0d5268211efd227419d65c",
+      "previous": {
+        "phpThreadId": null,
+        "componentKey": null,
+        "ownerRole": null,
+        "metadataLaneBackfill": null
+      }
+    },
+    {
+      "collection": "messages",
+      "_id": "6a0d5569211efd227419d7e0",
+      "previous": {
+        "phpThreadId": null,
+        "componentKey": null,
+        "ownerRole": null,
+        "metadataLaneBackfill": null
+      }
+    },
+    {
+      "collection": "messages",
+      "_id": "6a0d602c211efd227419dc56",
+      "previous": {
+        "phpThreadId": null,
+        "componentKey": null,
+        "ownerRole": null,
+        "metadataLaneBackfill": null
+      }
+    },
+    {
+      "collection": "messages",
+      "_id": "6a0d6153211efd227419dcd5",
+      "previous": {
+        "phpThreadId": null,
+        "componentKey": null,
+        "ownerRole": null,
+        "metadataLaneBackfill": null
+      }
+    },
+    {
+      "collection": "messages",
+      "_id": "6a0d7812211efd227419e830",
+      "previous": {
+        "phpThreadId": null,
+        "componentKey": null,
+        "ownerRole": null,
+        "metadataLaneBackfill": null
+      }
+    },
+    {
+      "collection": "messages",
+      "_id": "6a0eab2e9a407bf41fc9452c",
+      "previous": {
+        "phpThreadId": null,
+        "componentKey": null,
+        "ownerRole": null,
+        "metadataLaneBackfill": null
+      }
+    },
+    {
+      "collection": "messages",
+      "_id": "6a0eb21ce2296935432aeecc",
+      "previous": {
+        "phpThreadId": null,
+        "componentKey": null,
+        "ownerRole": null,
+        "metadataLaneBackfill": null
+      }
+    },
+    {
+      "collection": "messages",
+      "_id": "6a0ed7a5d41cb286ec8e9650",
+      "previous": {
+        "phpThreadId": null,
+        "componentKey": null,
+        "ownerRole": null,
+        "metadataLaneBackfill": null
+      }
+    },
+    {
+      "collection": "messages",
+      "_id": "6a0ed81ed41cb286ec8e96e0",
+      "previous": {
+        "phpThreadId": null,
+        "componentKey": null,
+        "ownerRole": null,
+        "metadataLaneBackfill": null
+      }
+    },
+    {
+      "collection": "messages",
+      "_id": "6a0ed85fd41cb286ec8e9727",
+      "previous": {
+        "phpThreadId": null,
+        "componentKey": null,
+        "ownerRole": null,
+        "metadataLaneBackfill": null
+      }
+    },
+    {
+      "collection": "messages",
+      "_id": "6a0ed9edb476a447913eb038",
+      "previous": {
+        "phpThreadId": null,
+        "componentKey": null,
+        "ownerRole": null,
+        "metadataLaneBackfill": null
+      }
+    },
+    {
+      "collection": "messages",
+      "_id": "6a0edb3abdf2a2047d609d5a",
+      "previous": {
+        "phpThreadId": null,
+        "componentKey": null,
+        "ownerRole": null,
+        "metadataLaneBackfill": null
+      }
+    },
+    {
+      "collection": "messages",
+      "_id": "6a0edbf5bdf2a2047d609df1",
+      "previous": {
+        "phpThreadId": null,
+        "componentKey": null,
+        "ownerRole": null,
+        "metadataLaneBackfill": null
+      }
+    },
+    {
+      "collection": "messages",
+      "_id": "6a0ee9b0bdf2a2047d60a63c",
+      "previous": {
+        "phpThreadId": null,
+        "componentKey": null,
+        "ownerRole": null,
+        "metadataLaneBackfill": null
+      }
+    },
+    {
+      "collection": "messages",
+      "_id": "6a0ee9bebdf2a2047d60a651",
+      "previous": {
+        "phpThreadId": null,
+        "componentKey": null,
+        "ownerRole": null,
+        "metadataLaneBackfill": null
+      }
+    },
+    {
+      "collection": "messages",
+      "_id": "6a0eeaf4bdf2a2047d60a711",
+      "previous": {
+        "phpThreadId": null,
+        "componentKey": null,
+        "ownerRole": null,
+        "metadataLaneBackfill": null
+      }
+    },
+    {
+      "collection": "messages",
+      "_id": "6a0eeb6fbdf2a2047d60a777",
+      "previous": {
+        "phpThreadId": null,
+        "componentKey": null,
+        "ownerRole": null,
+        "metadataLaneBackfill": null
+      }
+    },
+    {
+      "collection": "messages",
+      "_id": "6a0eeb75bdf2a2047d60a78d",
+      "previous": {
+        "phpThreadId": null,
+        "componentKey": null,
+        "ownerRole": null,
+        "metadataLaneBackfill": null
+      }
+    },
+    {
+      "collection": "messages",
+      "_id": "6a0eebefbdf2a2047d60a7ed",
+      "previous": {
+        "phpThreadId": null,
+        "componentKey": null,
+        "ownerRole": null,
+        "metadataLaneBackfill": null
+      }
+    },
+    {
+      "collection": "messages",
+      "_id": "6a0eebefbdf2a2047d60a7f8",
+      "previous": {
+        "phpThreadId": null,
+        "componentKey": null,
+        "ownerRole": null,
+        "metadataLaneBackfill": null
+      }
+    },
+    {
+      "collection": "messages",
+      "_id": "6a0eebefbdf2a2047d60a803",
+      "previous": {
+        "phpThreadId": null,
+        "componentKey": null,
+        "ownerRole": null,
+        "metadataLaneBackfill": null
+      }
+    },
+    {
+      "collection": "messages",
+      "_id": "6a0eebfebdf2a2047d60a817",
+      "previous": {
+        "phpThreadId": null,
+        "componentKey": null,
+        "ownerRole": null,
+        "metadataLaneBackfill": null
+      }
+    },
+    {
+      "collection": "messages",
+      "_id": "6a0ef67b255fef5b3ff490d6",
+      "previous": {
+        "phpThreadId": null,
+        "componentKey": null,
+        "ownerRole": null,
+        "metadataLaneBackfill": null
+      }
+    },
+    {
+      "collection": "messages",
+      "_id": "6a0effdc255fef5b3ff4958e",
+      "previous": {
+        "phpThreadId": null,
+        "componentKey": null,
+        "ownerRole": null,
+        "metadataLaneBackfill": null
+      }
+    },
+    {
+      "collection": "messages",
+      "_id": "6a0fe4d233668c1aba32e2cc",
+      "previous": {
+        "phpThreadId": null,
+        "componentKey": null,
+        "ownerRole": null,
+        "metadataLaneBackfill": null
+      }
+    },
+    {
+      "collection": "messages",
+      "_id": "6a0fe4d233668c1aba32e2dc",
+      "previous": {
+        "phpThreadId": null,
+        "componentKey": null,
+        "ownerRole": null,
+        "metadataLaneBackfill": null
+      }
+    },
+    {
+      "collection": "messages",
+      "_id": "6a1039e533668c1aba330ea5",
+      "previous": {
+        "phpThreadId": null,
+        "componentKey": null,
+        "ownerRole": null,
+        "metadataLaneBackfill": null
+      }
+    },
+    {
+      "collection": "messages",
+      "_id": "6a103a9733668c1aba330f5f",
+      "previous": {
+        "phpThreadId": null,
+        "componentKey": null,
+        "ownerRole": null,
+        "metadataLaneBackfill": null
+      }
+    },
+    {
+      "collection": "messages",
+      "_id": "6a103bf533668c1aba3310ac",
+      "previous": {
+        "phpThreadId": null,
+        "componentKey": null,
+        "ownerRole": null,
+        "metadataLaneBackfill": null
+      }
+    },
+    {
+      "collection": "messages",
+      "_id": "6a16c4656ea4b5c86229bf69",
+      "previous": {
+        "phpThreadId": null,
+        "componentKey": null,
+        "ownerRole": null,
+        "metadataLaneBackfill": null
+      }
+    },
+    {
+      "collection": "messages",
+      "_id": "6a191ec4aeacff4f9a551ff8",
+      "previous": {
+        "phpThreadId": null,
+        "componentKey": null,
+        "ownerRole": null,
+        "metadataLaneBackfill": null
+      }
+    },
+    {
+      "collection": "messages",
+      "_id": "6a191f67aeacff4f9a552089",
+      "previous": {
+        "phpThreadId": null,
+        "componentKey": null,
+        "ownerRole": null,
+        "metadataLaneBackfill": null
+      }
+    },
+    {
+      "collection": "messages",
+      "_id": "6a1986bbaeacff4f9a55538d",
+      "previous": {
+        "phpThreadId": null,
+        "componentKey": null,
+        "ownerRole": null,
+        "metadataLaneBackfill": null
+      }
+    },
+    {
+      "collection": "messages",
+      "_id": "6a22b726bc7a46cf7aafd8c6",
+      "previous": {
+        "phpThreadId": null,
+        "componentKey": null,
+        "ownerRole": null,
+        "metadataLaneBackfill": null
+      }
+    },
+    {
+      "collection": "messages",
+      "_id": "6a23aa0920a9e7047ba4d683",
+      "previous": {
+        "phpThreadId": null,
+        "componentKey": null,
+        "ownerRole": null,
+        "metadataLaneBackfill": null
+      }
+    },
+    {
+      "collection": "messages",
+      "_id": "6a23cbdf618348951a9ec15c",
+      "previous": {
+        "phpThreadId": null,
+        "componentKey": null,
+        "ownerRole": null,
+        "metadataLaneBackfill": null
+      }
+    },
+    {
+      "collection": "messages",
+      "_id": "6a23e993fbc497f5824d1214",
+      "previous": {
+        "phpThreadId": null,
+        "componentKey": null,
+        "ownerRole": null,
+        "metadataLaneBackfill": null
+      }
+    },
+    {
+      "collection": "messages",
+      "_id": "6a23ef95fbc497f5824d1598",
+      "previous": {
+        "phpThreadId": null,
+        "componentKey": null,
+        "ownerRole": null,
+        "metadataLaneBackfill": null
+      }
+    },
+    {
+      "collection": "messages",
+      "_id": "6a23f0c3fbc497f5824d1682",
+      "previous": {
+        "phpThreadId": null,
+        "componentKey": null,
+        "ownerRole": null,
+        "metadataLaneBackfill": null
+      }
+    },
+    {
+      "collection": "messages",
+      "_id": "6a23f0f7fbc497f5824d16b6",
+      "previous": {
+        "phpThreadId": null,
+        "componentKey": null,
+        "ownerRole": null,
+        "metadataLaneBackfill": null
+      }
+    },
+    {
+      "collection": "messages",
+      "_id": "6a240aacfbc497f5824d24a4",
+      "previous": {
+        "phpThreadId": null,
+        "componentKey": null,
+        "ownerRole": null,
+        "metadataLaneBackfill": null
+      }
+    },
+    {
+      "collection": "messages",
+      "_id": "6a240acefbc497f5824d24df",
+      "previous": {
+        "phpThreadId": null,
+        "componentKey": null,
+        "ownerRole": null,
+        "metadataLaneBackfill": null
+      }
+    },
+    {
+      "collection": "messages",
+      "_id": "6a241627fbc497f5824d2b61",
+      "previous": {
+        "phpThreadId": null,
+        "componentKey": null,
+        "ownerRole": null,
+        "metadataLaneBackfill": null
+      }
+    },
+    {
+      "collection": "messages",
+      "_id": "6a266a30fbc497f5824d42c2",
+      "previous": {
+        "phpThreadId": null,
+        "componentKey": null,
+        "ownerRole": null,
+        "metadataLaneBackfill": null
+      }
+    },
+    {
+      "collection": "messages",
+      "_id": "6a266ae3fbc497f5824d436b",
+      "previous": {
+        "phpThreadId": null,
+        "componentKey": null,
+        "ownerRole": null,
+        "metadataLaneBackfill": null
+      }
+    },
+    {
+      "collection": "messages",
+      "_id": "6a267a24fbc497f5824d4af5",
+      "previous": {
+        "phpThreadId": null,
+        "componentKey": null,
+        "ownerRole": null,
+        "metadataLaneBackfill": null
+      }
+    },
+    {
+      "collection": "messages",
+      "_id": "6a279b30fbc497f5824d784b",
+      "previous": {
+        "phpThreadId": null,
+        "componentKey": null,
+        "ownerRole": null,
+        "metadataLaneBackfill": null
+      }
+    },
+    {
+      "collection": "messages",
+      "_id": "6a279b67fbc497f5824d7888",
+      "previous": {
+        "phpThreadId": null,
+        "componentKey": null,
+        "ownerRole": null,
+        "metadataLaneBackfill": null
+      }
+    },
+    {
+      "collection": "threads",
+      "_id": "69facd148419e7ae82bf4a99",
+      "previous": {
+        "phpThreadId": null,
+        "componentKey": null,
+        "ownerRole": null,
+        "metadataLaneBackfill": null
+      }
+    },
+    {
+      "collection": "threads",
+      "_id": "69face418419e7ae82bf4b2a",
+      "previous": {
+        "phpThreadId": null,
+        "componentKey": null,
+        "ownerRole": null,
+        "metadataLaneBackfill": null
+      }
+    },
+    {
+      "collection": "threads",
+      "_id": "6a02c596d440a2da2dec2f8a",
+      "previous": {
+        "phpThreadId": null,
+        "componentKey": null,
+        "ownerRole": null,
+        "metadataLaneBackfill": null
+      }
+    },
+    {
+      "collection": "threads",
+      "_id": "6a057cd99daba2d9d7e68e24",
+      "previous": {
+        "phpThreadId": null,
+        "componentKey": null,
+        "ownerRole": null,
+        "metadataLaneBackfill": null
+      }
+    },
+    {
+      "collection": "threads",
+      "_id": "6a08414ea3129fced2eabd2d",
+      "previous": {
+        "phpThreadId": null,
+        "componentKey": null,
+        "ownerRole": null,
+        "metadataLaneBackfill": null
+      }
+    },
+    {
+      "collection": "threads",
+      "_id": "6a0aec25a3129fced2eabd2e",
+      "previous": {
+        "phpThreadId": null,
+        "componentKey": null,
+        "ownerRole": null,
+        "metadataLaneBackfill": null
+      }
+    },
+    {
+      "collection": "threads",
+      "_id": "6a0c3ea3a3129fced2eabd31",
+      "previous": {
+        "phpThreadId": null,
+        "componentKey": null,
+        "ownerRole": null,
+        "metadataLaneBackfill": null
+      }
+    },
+    {
+      "collection": "threads",
+      "_id": "6a0d5263a3129fced2eabd39",
+      "previous": {
+        "phpThreadId": null,
+        "componentKey": null,
+        "ownerRole": null,
+        "metadataLaneBackfill": null
+      }
+    },
+    {
+      "collection": "threads",
+      "_id": "6a0eab22a3129fced2eabd45",
+      "previous": {
+        "phpThreadId": null,
+        "componentKey": null,
+        "ownerRole": null,
+        "metadataLaneBackfill": null
+      }
+    },
+    {
+      "collection": "threads",
+      "_id": "6a0eeaf0a3129fced2eabd4c",
+      "previous": {
+        "phpThreadId": null,
+        "componentKey": null,
+        "ownerRole": null,
+        "metadataLaneBackfill": null
+      }
+    },
+    {
+      "collection": "threads",
+      "_id": "6a1039e1a3129fced2eabd56",
+      "previous": {
+        "phpThreadId": null,
+        "componentKey": "education",
+        "ownerRole": null,
+        "metadataLaneBackfill": null
+      }
+    },
+    {
+      "collection": "threads",
+      "_id": "6a1986b748290b17256318ad",
+      "previous": {
+        "phpThreadId": null,
+        "componentKey": "employment",
+        "ownerRole": null,
+        "metadataLaneBackfill": null
+      }
+    },
+    {
+      "collection": "threads",
+      "_id": "6a201e0448290b17256318b8",
+      "previous": {
+        "phpThreadId": null,
+        "componentKey": "education",
+        "ownerRole": null,
+        "metadataLaneBackfill": null
+      }
+    },
+    {
+      "collection": "threads",
+      "_id": "6a240aa948290b17256318c4",
+      "previous": {
+        "phpThreadId": null,
+        "componentKey": "education",
+        "ownerRole": null,
+        "metadataLaneBackfill": null
+      }
+    },
+    {
+      "collection": "threads",
+      "_id": "6a266ae048290b17256318cf",
+      "previous": {
+        "phpThreadId": null,
+        "componentKey": "education",
+        "ownerRole": null,
+        "metadataLaneBackfill": null
+      }
+    },
+    {
+      "collection": "threads",
+      "_id": "6a279b2d48290b17256318d2",
+      "previous": {
+        "phpThreadId": null,
+        "componentKey": "employment",
+        "ownerRole": null,
+        "metadataLaneBackfill": null
+      }
+    }
+  ]
+}
