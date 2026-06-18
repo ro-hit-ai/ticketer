@@ -175,27 +175,6 @@ export default function PortalLayout() {
             </SidebarHeader>
 
             <SidebarContent>
-              {open ? (
-                <div className="mb-2 px-2">
-                  <div className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5">
-                    <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">Operations</div>
-                    <div className="mt-1 flex items-center justify-between text-[11px] text-slate-600">
-                      <span>Mode</span>
-                      <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 font-semibold text-emerald-700">Live</span>
-                    </div>
-                  </div>
-                </div>
-              ) : null}
-              <div className="mb-2 px-2">
-                <button
-                  type="button"
-                  onClick={() => navigate("/portal/tickets/new")}
-                  className="inline-flex h-8 w-full items-center justify-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-[11px] font-semibold text-white transition-colors hover:bg-emerald-700"
-                >
-                  <Plus className="h-3.5 w-3.5" />
-                  New Ticket
-                </button>
-              </div>
               <SidebarMenu>
                 {sidebarSections.map((section) => {
                   const isExpanded = expandedSection === section.key;

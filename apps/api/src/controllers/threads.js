@@ -159,6 +159,16 @@ async function ensureNodeThreadAccess(req, thread) {
     return { allowed: true };
   }
 
+  // Communication monitoring users are not workflow participants and have no
+  // PHP session cookie. fetchAssignedApplications returns HTTP 401 for them,
+  // producing an empty scope and a false denial. For non-workflow-principal
+  // callers, the thread's existence in Mongo combined with successful Node
+  // authentication is the access grant — the same implicit grant the list
+  // route relies on when it passes { allowed: true } as nodeDecision.
+  if (req?.user?.isWorkflowPrincipal !== true) {
+    return { allowed: true };
+  }
+
   const scope = await getCachedAccessScope(req);
 
   // ✅ IMPORTANT FIX
@@ -194,6 +204,22 @@ async function ensureThreadAccess(req, thread, accessType = 'read') {
   }
 
   const nodeDecision = await ensureNodeThreadAccess(req, thread);
+
+  // Communication monitoring users are not workflow participants.
+  // They have no PHP integer identity and authorizeLane returns
+  // PHP_AUTH_TIMEOUT or unsupported_role for them — neither is a
+  // meaningful authorization signal. For non-workflow-principal callers,
+  // the Node scope decision is the complete access control answer.
+  if (req?.user?.isWorkflowPrincipal !== true) {
+    return nodeDecision.allowed
+      ? { allowed: true }
+      : {
+          allowed: false,
+          statusCode: nodeDecision.statusCode || 403,
+          message: nodeDecision.message || 'You do not have access to this thread',
+        };
+  }
+
   const laneContext = extractLaneContext(thread, { accessType });
   const phpDecision = await authorizeLane(req, {
     ...laneContext,
@@ -282,24 +308,38 @@ async function ensureApplicationLaneAccess(req, applicationId, accessType = 'rea
 async function filterAuthorizedThreads(req, threads, nodeDecision = { allowed: true }) {
   const authorized = [];
 
+  // Workflow principals (PHP actors with isWorkflowPrincipal=true) carry a
+  // PHP integer userId and require per-lane authorization via PHP.
+  // Communication monitoring users are not workflow participants — they have
+  // no PHP integer identity and authorizeLane always returns unsupported_role
+  // for them. For monitoring users the Mongo query already scoped the result;
+  // skip authorizeLane and use nodeDecision directly.
+  const isWorkflowPrincipalCaller = req?.user?.isWorkflowPrincipal === true;
+
   for (const thread of threads) {
-    const laneContext = extractLaneContext(thread);
-    const phpDecision = await authorizeLane(req, {
-      ...laneContext,
-      accessType: 'read',
-    });
-    const decision = mergeAuthorizationDecision({
-      nodeDecision,
-      phpDecision,
-      shadowLog: {
-        userId: normalizeUserId(req?.user?._id || req?.user?.id),
-        applicationId: laneContext.applicationId,
-        componentKey: laneContext.componentKey,
-        ownerRole: laneContext.ownerRole,
-        threadId: laneContext.threadId,
+    let decision;
+
+    if (isWorkflowPrincipalCaller) {
+      const laneContext = extractLaneContext(thread);
+      const phpDecision = await authorizeLane(req, {
+        ...laneContext,
         accessType: 'read',
-      },
-    });
+      });
+      decision = mergeAuthorizationDecision({
+        nodeDecision,
+        phpDecision,
+        shadowLog: {
+          userId: normalizeUserId(req?.user?._id || req?.user?.id),
+          applicationId: laneContext.applicationId,
+          componentKey: laneContext.componentKey,
+          ownerRole: laneContext.ownerRole,
+          threadId: laneContext.threadId,
+          accessType: 'read',
+        },
+      });
+    } else {
+      decision = nodeDecision;
+    }
 
     if (decision.allowed) {
       const {
